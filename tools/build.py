@@ -11,5 +11,5 @@ if a.target.startswith('aarch64'):
 if a.sysroot:
  env.update(PKG_CONFIG_ALLOW_CROSS='1',PKG_CONFIG_SYSROOT_DIR=str(a.sysroot),PKG_CONFIG_LIBDIR=str(a.sysroot/'usr/lib/pkgconfig'),CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS='-C link-arg=--sysroot='+str(a.sysroot)+' -C link-arg=-Wl,-rpath-link,'+str(a.sysroot/'usr/lib'))
 cmd=['cargo','build','--locked','--release','--features','webrtc','--manifest-path',str(r/'backend/Cargo.toml'),'--target',a.target,'--target-dir',str(cache)];subprocess.run(cmd,env=env,check=True)
-bundle=a.output/'debug';shutil.copytree(r/'frontend',bundle);shutil.copy2(cache/a.target/'release/mix-debug-server',bundle/'mix-debug-server')
+bundle=a.output/'debug';shutil.copytree(r/'frontend',bundle);shutil.copy2(cache/a.target/'release/xr-debug-server',bundle/'xr-debug-server')
 (a.output/'build-manifest.json').write_text(json.dumps({'command':cmd,'files_sha256':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in bundle.iterdir()},'device_tested':False},indent=2)+'\n')

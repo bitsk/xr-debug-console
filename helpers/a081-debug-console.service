@@ -10,9 +10,9 @@ Environment=LD_LIBRARY_PATH=/opt/mix-remote-video/lib
 Environment=GST_PLUGIN_PATH_1_0=/opt/mix-remote-video/lib/gstreamer-1.0
 Environment=GST_REGISTRY=/run/mix-camera-preview/gst-registry.bin
 ExecStartPre=/usr/bin/rm -f /run/mix-camera-preview/frames.sock /run/mix-camera-preview/gst-registry.bin
-ExecStartPre=/opt/mix-debug-console/mix-debug-server --wait-address ${MIX_VIEW_ADDRESS} --timeout 60
+ExecStartPre=/opt/mix-debug-console/xr-debug-server --wait-address ${MIX_VIEW_ADDRESS} --timeout 60
 TimeoutStartSec=65
-ExecStart=/opt/mix-debug-console/mix-debug-server --listen ${MIX_VIEW_ADDRESS} --token-file /var/lib/mix-debug-console/access.token --session-file /run/mix-vr-shell-controller/session.json
+ExecStart=/opt/mix-debug-console/xr-debug-server --listen ${MIX_VIEW_ADDRESS} --token-file /var/lib/mix-debug-console/access.token --session-file /run/mix-vr-shell-controller/session.json
 KillMode=control-group
 TimeoutStopSec=8
 Restart=on-failure

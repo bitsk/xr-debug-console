@@ -142,7 +142,7 @@ int main(int argc,char **argv) {
     char identity[256];
     if (geteuid()!=0 || width<0 || width%4 || fps<0 || strncmp(card,"/dev/dri/card",13) ||
         !read_text("/etc/a081-rootfs-id",identity,sizeof(identity)) || strcmp(identity,"a081-steamos-arm64\n") ||
-        !read_text("/proc/device-tree/model",identity,sizeof(identity)) || strcmp(identity,"iQIYI Qiyu MIX (A081)")) return 3;
+        !read_text("/proc/device-tree/model",identity,sizeof(identity)) || strcmp(identity,"iQIYI XR MIX (A081)")) return 3;
     struct capture c={.width=(unsigned)width,.height=(((uint64_t)width*1920+3663)/3664+1)&~1U};
     size_t bytes=(size_t)c.width*c.height*3/2;
     c.nv12=malloc(bytes);

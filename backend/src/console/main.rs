@@ -7,7 +7,7 @@ mod preview;
 mod screen;
 mod telemetry;
 mod util;
-use mix_camera_native::*;
+use xr_debug_native::*;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -386,7 +386,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
-    let root = std::env::current_exe()?.parent().unwrap().to_path_buf();
+    let root = std::env::var_os("XR_DEBUG_WEB_ROOT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/usr/share/xr/debug"));
     let screen =
         args.iter().any(|s| s == "--screen-service") || args[0].ends_with("mix-video-server");
     let mut options = HashMap::new();
@@ -445,7 +445,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             || fs::read("/proc/device-tree/model")?
                 .strip_suffix(&[0])
                 .unwrap_or(&[])
-                != b"iQIYI Qiyu MIX (A081)")
+                != b"iQIYI XR MIX (A081)")
     {
         return Err("Live mode requires root on identified A081 SteamOS".into());
     }

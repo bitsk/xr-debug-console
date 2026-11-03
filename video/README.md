@@ -17,7 +17,7 @@ r1 实测：Venus 对生成的运动 NV12 1280×672 输入完成300帧、约60fp
 
 采集没有 DRM master/modeset 操作。并发 scanout 读取保持 `atomic_snapshot=false`：vblank 递增只证明新的扫描时刻，内容差异也不能证明获取了一帧完整的新 compositor 输出。统计必须分别保留实际采集 readback、编码 VCL access unit、浏览器接收/解码和浏览器视频呈现回调的计数。网页不使用 requestAnimationFrame 计算视频帧率，不从请求的60fps生成计数，不以旧图重复刷新充数。
 
-`build.py --output <新的build目录> --backend <交叉构建的mix-debug-server>` 使用既有 Frame sysroot 编译采集程序并生成摘要包。WebRTC/DTLS/SRTP 依赖独立安装到同前缀的 `lib`；`mix-video-server` 与调试服务共享同一 Rust 构建产物，以独立进程提供8091服务；无需 Python GI。本服务包不覆盖该目录，也不更新全局库。安装前验证两个包的摘要和实际设备身份。
+`build.py --output <新的build目录> --backend <交叉构建的xr-debug-server>` 使用既有 Frame sysroot 编译采集程序并生成摘要包。WebRTC/DTLS/SRTP 依赖独立安装到同前缀的 `lib`；`mix-video-server` 与调试服务共享同一 Rust 构建产物，以独立进程提供8091服务；无需 Python GI。本服务包不覆盖该目录，也不更新全局库。安装前验证两个包的摘要和实际设备身份。
 
 在硬件窗口拥有者控制的 SteamOS root 会话中，进入解压后的服务包目录：
 

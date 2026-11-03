@@ -21,7 +21,7 @@ ip = ipaddress.ip_address(a.address)
 assert ip.version == 4 and ip.is_private and not ip.is_unspecified
 assert os.geteuid() == 0 and os.uname().machine == 'aarch64'
 assert Path('/etc/a081-rootfs-id').read_text().strip() == 'a081-steamos-arm64'
-assert Path('/proc/device-tree/model').read_bytes().rstrip(b'\0') == b'iQIYI Qiyu MIX (A081)'
+assert Path('/proc/device-tree/model').read_bytes().rstrip(b'\0') == b'iQIYI XR MIX (A081)'
 source = Path(__file__).resolve().parent
 prefix = Path('/opt/mix-remote-video')
 state = Path('/var/lib/mix-remote-video')

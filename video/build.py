@@ -14,7 +14,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--output', required=True, type=Path)
-p.add_argument('--backend', required=True, type=Path, help='Fresh cross-built mix-debug-server binary')
+p.add_argument('--backend', required=True, type=Path, help='Fresh cross-built xr-debug-server binary')
 a = p.parse_args()
 out = a.output.resolve()
 assert out.is_relative_to(ROOT / 'build') and not out.exists()

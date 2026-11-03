@@ -1,0 +1,7 @@
+#!/usr/bin/make -f
+%:
+	dh $@ --buildsystem=none
+override_dh_auto_build-arch:
+	cargo build --locked --offline --release --features webrtc --manifest-path backend/Cargo.toml --target-dir target
+override_dh_auto_clean:
+	rm -rf target

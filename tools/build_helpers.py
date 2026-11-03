@@ -4,7 +4,7 @@
 import argparse,hashlib,json,subprocess
 from pathlib import Path
 r=Path(__file__).resolve().parents[1]
-p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);p.add_argument('--device',type=Path,default=r.parent/'qiyu-device-service');p.add_argument('--openvr-include',type=Path,required=True);p.add_argument('--cxx',default='aarch64-linux-gnu-g++');a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);p.add_argument('--device',type=Path,default=r.parent/'xr-device-io');p.add_argument('--openvr-include',type=Path,required=True);p.add_argument('--cxx',default='aarch64-linux-gnu-g++');a=p.parse_args()
 if a.output.exists():p.error('Choose a new output directory')
 if not (a.openvr_include/'openvr.h').is_file():p.error('Supply an OpenVR SDK include directory')
 a.output.mkdir(parents=True)
