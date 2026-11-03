@@ -1,7 +1,19 @@
 #!/usr/bin/make -f
+include /usr/share/dpkg/default.mk
+export RUSTFLAGS = --remap-path-prefix=$(CURDIR)=/usr/src/xr-debug-console
+RUST_TARGET_arm64 = aarch64-unknown-linux-gnu
+RUST_TARGET_amd64 = x86_64-unknown-linux-gnu
+RUST_TARGET_riscv64 = riscv64gc-unknown-linux-gnu
+RUST_TARGET = $(RUST_TARGET_$(DEB_HOST_ARCH))
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = aarch64-linux-gnu-gcc
+export CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER = riscv64-linux-gnu-gcc
 %:
 	dh $@ --buildsystem=none
 override_dh_auto_build-arch:
-	cargo build --locked --offline --release --features webrtc --manifest-path backend/Cargo.toml --target-dir target
+	test -n "$(RUST_TARGET)"
+	cargo build --locked --offline --release --features webrtc --manifest-path backend/Cargo.toml --target $(RUST_TARGET) --target-dir target
+	if [ "$(DEB_HOST_ARCH)" = arm64 ]; then dh_auto_configure --buildsystem=cmake --sourcedirectory=native --builddirectory=build/native -- -DCMAKE_INSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH) && cmake --build build/native; fi
+override_dh_auto_install:
+	if [ "$(DEB_HOST_ARCH)" = arm64 ]; then DESTDIR=$(CURDIR)/debian/native-stage cmake --install build/native; fi
 override_dh_auto_clean:
-	rm -rf target
+	rm -rf target build debian/native-stage

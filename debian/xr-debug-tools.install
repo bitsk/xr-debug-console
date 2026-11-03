@@ -1,0 +1,2 @@
+debian/native-stage/usr/lib/*/xr/debug/tools/* usr/lib/aarch64-linux-gnu/xr/debug/tools/
+debian/native-stage/usr/lib/*/xr/debug/capture usr/lib/aarch64-linux-gnu/xr/debug/

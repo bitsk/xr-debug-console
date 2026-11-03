@@ -318,13 +318,15 @@ fn capture_valid(p: &Path, screen: bool) -> bool {
     }
     let allowed = if screen {
         [
+            "/usr/lib/aarch64-linux-gnu/xr/debug/video/nv12-capture",
+            "/usr/lib/aarch64-linux-gnu/xr/debug/video/nv12-capture-gpu",
             "/opt/mix-remote-video/nv12-capture",
             "/opt/mix-remote-video-gpu/nv12-capture-gpu",
             "/opt/mix-remote-video-gpu-specialized/nv12-capture-gpu",
         ]
         .contains(&p.to_str().unwrap_or(""))
     } else {
-        p == Path::new("/opt/mix-debug-console/capture")
+        p == Path::new("/usr/lib/aarch64-linux-gnu/xr/debug/capture") || p == Path::new("/opt/mix-debug-console/capture")
     };
     if !allowed {
         return false;
@@ -464,9 +466,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if screen {
                 std::env::var_os("MIX_VIDEO_CAPTURE")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/opt/mix-remote-video/nv12-capture"))
+                    .unwrap_or_else(|| PathBuf::from("/usr/lib/aarch64-linux-gnu/xr/debug/video/nv12-capture"))
             } else {
-                root.join("capture")
+                PathBuf::from("/usr/lib/aarch64-linux-gnu/xr/debug/capture")
             }
         });
     if live && !capture_valid(&capture, screen) {

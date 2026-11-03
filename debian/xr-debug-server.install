@@ -1,1 +1,1 @@
-target/release/xr-debug-server usr/bin/
+target/*/release/xr-debug-server usr/bin/
