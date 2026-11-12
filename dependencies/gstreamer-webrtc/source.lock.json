@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "distribution": "openKylin",
+  "package": "gstreamer1.0-plugins-bad",
+  "version": "1.28.2-ok6",
+  "architecture": "arm64",
+  "url": "https://archive.openkylin.top/openkylin/pool/main/g/gst-plugins-bad1.0/gstreamer1.0-plugins-bad_1.28.2-ok6_arm64.deb",
+  "sha256": "6ed65df44f101805e2995ad41af0cd19b5f20ae235f66b97cf6d477ac2d85a2d",
+  "bytes": 2680518,
+  "source_package": "gst-plugins-bad1.0",
+  "files": {
+    "usr/lib/aarch64-linux-gnu/gstreamer-1.0/libgstwebrtc.so": {
+      "destination": "usr/lib/aarch64-linux-gnu/xr/debug/gstreamer-1.0/libgstwebrtc.so",
+      "sha256": "fa5514f12ca36894e60faa1a502b5b767de232b416a8be7e3c02e0cc8ee2d465"
+    },
+    "usr/lib/aarch64-linux-gnu/gstreamer-1.0/libgstdtls.so": {
+      "destination": "usr/lib/aarch64-linux-gnu/xr/debug/gstreamer-1.0/libgstdtls.so",
+      "sha256": "9398a12fa966aa319ccad99d90bd877942f2b2c671e504d9d19a20591d2f15c9"
+    },
+    "usr/lib/aarch64-linux-gnu/gstreamer-1.0/libgstsrtp.so": {
+      "destination": "usr/lib/aarch64-linux-gnu/xr/debug/gstreamer-1.0/libgstsrtp.so",
+      "sha256": "4deefe7fc95199410ec62783ffcf052bd322ec4bb91d24e167fabe193aaca962"
+    },
+    "usr/lib/aarch64-linux-gnu/gstreamer-1.0/libgstsctp.so": {
+      "destination": "usr/lib/aarch64-linux-gnu/xr/debug/gstreamer-1.0/libgstsctp.so",
+      "sha256": "db49eeb8dc91b92b8d38954120b7e1b37e43ee6455b5cf333bf5eed7adf475ef"
+    },
+    "usr/lib/aarch64-linux-gnu/gstreamer-1.0/libgstvideoparsersbad.so": {
+      "destination": "usr/lib/aarch64-linux-gnu/xr/debug/gstreamer-1.0/libgstvideoparsersbad.so",
+      "sha256": "8fcece6fbfdf0ac7af814b2b9e1c43dc694f7d7f64d2bab724c4e3a8860494fc"
+    },
+    "usr/share/doc/gstreamer1.0-plugins-bad/copyright": {
+      "destination": "usr/share/doc/xr-debug-gstreamer/upstream-copyright",
+      "sha256": "b8d888d93f95e603331af3b330cd8135636e0584a6fa9e7706e1ed2bfe93b1a7"
+    }
+  },
+  "scope": "Unmodified WebRTC transport and H264/H265 parser plugins only; original upstream copyright retained"
+}

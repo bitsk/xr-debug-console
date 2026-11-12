@@ -23,6 +23,18 @@ use std::{
 #[cfg(feature = "webrtc")]
 mod video;
 
+/// Register the exact app-scoped distribution plugins without global GST changes.
+#[cfg(feature = "webrtc")]
+pub fn init_gstreamer() -> Result<(), String> {
+    static INIT: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+    INIT.get_or_init(|| {
+        gstreamer::init().map_err(|error| error.to_string())?;
+        let _ = gstreamer::Registry::get().scan_path(
+            "/usr/lib/aarch64-linux-gnu/xr/debug/gstreamer-1.0");
+        Ok(())
+    }).clone()
+}
+
 const STREAMS: usize = 18;
 const MAX_PACKET: usize = 104 + 128 * 1024;
 const MAX_AGE: u64 = 500_000_000;

@@ -44,3 +44,7 @@
 复用已准备的目标 GStreamer sysroot 和 Cargo 缓存，不重建未修改的视频/native helpers。
 `XR_DEBUG_CARGO_TARGET_DIR`、`XR_DEBUG_TARGET_RUSTFLAGS`、`XR_CROSS_LIBDIR` 和
 `XR_CROSS_SHLIBS` 可提供交叉编译输入；默认完整构建仍包含原生工具。
+
+## openKylin WebRTC 插件
+
+`xr-debug-gstreamer` 从 `dependencies/gstreamer-webrtc/source.lock.json` 固定的官方 ARM64 包中选择 5 个原样插件：WebRTC、DTLS、SRTP、SCTP 和 H264/H265 parser，保留完整上游版权说明。构建环境通过 `XR_GST_RUNTIME_DEB` 提供校验后的官方包。后端只在本进程注册私有插件目录，不修改全局 GStreamer 搜索路径。原生视频包依赖该组件及发行版的 nice/base/good 插件，不引入公共源依赖不齐的整个 bad 插件集合。

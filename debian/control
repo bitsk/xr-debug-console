@@ -24,7 +24,7 @@ Description: XR debug console static frontend
 Package: xr-debug-video
 Build-Profiles: <!pkg.xr-debug.server-only>
 Architecture: arm64
-Depends: ${misc:Depends}, ${shlibs:Depends}, xr-debug-server (= ${binary:Version}), gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-nice
+Depends: ${misc:Depends}, ${shlibs:Depends}, xr-debug-server (= ${binary:Version}), gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, xr-debug-gstreamer (= ${binary:Version}), gstreamer1.0-nice
 Description: XR NV12 and hardware video capture helpers
  Native CPU and GPU NV12 paths for the existing hardware encoder pipeline.
 
@@ -34,3 +34,11 @@ Architecture: arm64
 Depends: ${misc:Depends}, ${shlibs:Depends}
 Description: XR camera and presentation observation tools
  Diagnostic helpers and a maintenance-only capture fallback.
+
+Package: xr-debug-gstreamer
+Build-Profiles: <!pkg.xr-debug.server-only>
+Architecture: arm64
+Depends: ${misc:Depends}, ${shlibs:Depends}, libgstreamer-plugins-bad1.0-0 (= 1.28.2-ok6), gstreamer1.0-nice
+Description: App-scoped upstream WebRTC transport and video parser plugins
+ Unmodified checksum-locked distribution plugins for the XR debug service.
+ Registers only within the debug process; no global GStreamer path change.

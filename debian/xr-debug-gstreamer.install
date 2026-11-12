@@ -1,0 +1,2 @@
+debian/gst-runtime/usr/lib/*/xr/debug/gstreamer-1.0/* usr/lib/aarch64-linux-gnu/xr/debug/gstreamer-1.0/
+debian/gst-runtime/usr/share/doc/xr-debug-gstreamer/upstream-copyright usr/share/doc/xr-debug-gstreamer/

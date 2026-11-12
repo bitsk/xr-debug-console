@@ -63,7 +63,7 @@ impl Session {
     fn new(phase: usize, fps: u32, bitrate: u32, fd: i32, generation: u64) -> Result<Self, String> {
         static INIT: OnceLock<Result<(), String>> = OnceLock::new();
         INIT.get_or_init(|| {
-            gst::init().map_err(|e| e.to_string())?;
+            crate::init_gstreamer()?;
             std::thread::spawn(|| gst::glib::MainLoop::new(None, false).run());
             Ok(())
         })

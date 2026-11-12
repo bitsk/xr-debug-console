@@ -124,7 +124,7 @@ pub fn venus(codec: &str) -> Result<(String, String), String> {
 fn init() -> Result<(), String> {
     static INIT: OnceLock<Result<(), String>> = OnceLock::new();
     INIT.get_or_init(|| {
-        gst::init().map_err(|e| e.to_string())?;
+        xr_debug_native::init_gstreamer()?;
         std::thread::spawn(|| gst::glib::MainLoop::new(None, false).run());
         Ok(())
     })

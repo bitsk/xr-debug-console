@@ -7,3 +7,10 @@ Copyright: See original source file and license notices
 License: GPL-3.0-or-later
  See the repository license files and individual file headers.
  Third-party notices and licenses remain applicable.
+
+Files: debian/gst-runtime/*
+Copyright: Original GStreamer and embedded component contributors
+License: GStreamer-upstream-terms
+ The complete original copyright and licensing statements are retained in
+ /usr/share/doc/xr-debug-gstreamer/upstream-copyright. These selected binaries
+ are copied unchanged from the checksum-locked distribution package.
