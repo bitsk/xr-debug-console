@@ -216,6 +216,15 @@ pub struct Camera {
     #[cfg(feature = "webrtc")]
     video: Mutex<video::Video>,
 }
+fn camera_csid_count() -> Option<usize> {
+    let count = std::fs::read_dir("/sys/class/video4linux").ok()?
+        .flatten()
+        .filter_map(|entry| std::fs::read_to_string(entry.path().join("name")).ok())
+        .filter(|name| name.trim().strip_prefix("msm_csid").is_some_and(|suffix|
+            !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())))
+        .count();
+    (count > 0).then_some(count)
+}
 fn stream_slot(id: usize) -> usize {
     if id >= 16 {
         id - 12
@@ -594,7 +603,10 @@ pub unsafe extern "C" fn mix_camera_status(c: *const Camera, fd: i32) -> i32 {
     let data = json!({"enabled":c.live,"cameras":cameras,"streams":rows,"error":s.error,"revision":s.revision,
         "rejected_packets":s.rejected,
         "backend":"rust","transport":"sampled-raw","max_age_ms":500,"max_preview_fps_per_stream":30,
-        "physical_cameras":6,"simultaneous_six_verified":false,"csid_count":4,"optical_led_phase_verified":false,
+        "physical_cameras":6,"simultaneous_six_verified":false,
+        "concurrent_six_active":cameras.iter().all(|row| row["state"] == "live"),
+        "passthrough_active":cameras.iter().skip(4).all(|row| row["state"] == "live"),
+        "passthrough_color_calibrated":false,"csid_count":camera_csid_count(),"optical_led_phase_verified":false,
         "counters":{"received_frames":s.received,"received_bytes":s.bytes_received,"rejected_packets":s.rejected,
             "sent_frames":s.sent,"sent_bytes":s.bytes_sent,"send_errors":s.send_errors}}).to_string();
     drop(s);

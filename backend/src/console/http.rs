@@ -262,7 +262,8 @@ pub fn proxy(stream: &mut TcpStream, r: &Request, address: &str, token: &str) ->
             && ((r.method == "DELETE" && parts.len() == 3)
                 || (parts.len() == 4
                     && ((r.method == "GET" && matches!(parts[3], "ice" | "stats"))
-                        || (r.method == "POST" && matches!(parts[3], "ice" | "answer")))));
+                        || (r.method == "POST"
+                            && matches!(parts[3], "ice" | "answer" | "keyframe")))));
     if !allowed {
         return json_reply(
             stream,

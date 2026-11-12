@@ -8,10 +8,10 @@ use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     fs::File,
-    io::{self, BufRead, BufReader, Read},
+    io::{self, BufRead, BufReader, Read, Write},
     os::fd::AsRawFd,
     path::PathBuf,
-    process::{Child, ChildStdout, Command, Stdio},
+    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, OnceLock,
@@ -219,6 +219,10 @@ struct Session {
     stats: Arc<Mutex<Stats>>,
     stop: Arc<AtomicBool>,
     capture: Option<Child>,
+    keyframe_pipe: Option<ChildStdin>,
+    keyframe_pending: Arc<AtomicBool>,
+    last_keyframe_request: Option<Instant>,
+    keyframe_requests: u64,
     reader: Option<JoinHandle<()>>,
     lease: Option<File>,
     generation: u64,
@@ -288,6 +292,7 @@ impl Session {
             peer.emit_by_name::<Option<rtc::WebRTCRTPTransceiver>>("get-transceiver", &[&0i32])
         {
             t.set_property("direction", rtc::WebRTCRTPTransceiverDirection::Sendonly);
+            t.set_property("do-nack", true);
         }
         let stats = Arc::new(Mutex::new(Stats::default()));
         {
@@ -501,6 +506,10 @@ impl Session {
             stats,
             stop,
             capture: None,
+            keyframe_pipe: None,
+            keyframe_pending: Arc::new(AtomicBool::new(false)),
+            last_keyframe_request: None,
+            keyframe_requests: 0,
             reader: None,
             lease: Some(lease),
             generation,
@@ -530,6 +539,7 @@ impl Session {
         ]);
         if native {
             cmd.args(["--codec", &o.codec, "--bitrate", &o.bitrate.to_string()]);
+            cmd.args(["--keyframe-stdin", "1"]).stdin(Stdio::piped());
         }
         if program.file_name().is_some_and(|s| s == "nv12-capture-gpu") {
             for k in [
@@ -549,7 +559,32 @@ impl Session {
         cmd.stdout(Stdio::piped()).stderr(Stdio::inherit());
         let mut child = cmd.spawn().map_err(|e| e.to_string())?;
         let stdout = child.stdout.take().unwrap();
+        session.keyframe_pipe = child.stdin.take();
         session.capture = Some(child);
+        if let Some(pipe) = &session.keyframe_pipe {
+            let flags = unsafe { libc::fcntl(pipe.as_raw_fd(), libc::F_GETFL) };
+            if flags < 0
+                || unsafe { libc::fcntl(pipe.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) }
+                    < 0
+            {
+                return Err(io::Error::last_os_error().to_string());
+            }
+            let pending = session.keyframe_pending.clone();
+            session.source.static_pad("src").unwrap().add_probe(
+                gst::PadProbeType::EVENT_UPSTREAM,
+                move |_, info| {
+                    if let Some(gst::PadProbeData::Event(ref event)) = info.data {
+                        if event
+                            .structure()
+                            .is_some_and(|s| s.name() == "GstForceKeyUnit")
+                        {
+                            pending.store(true, Ordering::Release);
+                        }
+                    }
+                    gst::PadProbeReturn::Ok
+                },
+            );
+        }
         session.pipe_bytes =
             unsafe { libc::fcntl(stdout.as_raw_fd(), libc::F_SETPIPE_SZ, 1048576) };
         if session.pipe_bytes != 1048576 {
@@ -618,6 +653,34 @@ impl Session {
         if self.closed {
             return;
         }
+        if self.keyframe_pending.load(Ordering::Acquire)
+            && self
+                .last_keyframe_request
+                .is_none_or(|t| t.elapsed() >= Duration::from_millis(250))
+        {
+            // One byte is atomic and nonblocking; streaming callbacks only set
+            // the flag and never wait for the capture process or this mutex.
+            self.keyframe_pending.store(false, Ordering::Release);
+            if let Some(pipe) = &mut self.keyframe_pipe {
+                match pipe.write_all(b"K") {
+                    Ok(()) => {
+                        self.last_keyframe_request = Some(Instant::now());
+                        self.keyframe_requests += 1;
+                    }
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                        ) =>
+                    {
+                        self.keyframe_pending.store(true, Ordering::Release);
+                    }
+                    Err(e) => {
+                        self.stats.lock().unwrap().error = Some(format!("Keyframe control: {e}"))
+                    }
+                }
+            }
+        }
         self.negotiate();
         if let Some(bus) = self.pipeline.bus() {
             for m in bus.iter() {
@@ -641,6 +704,10 @@ impl Session {
                 rtc::WebRTCPeerConnectionState::Failed | rtc::WebRTCPeerConnectionState::Closed
             )
         {
+            eprintln!(
+                "screen session closing: revoked={revoked} stopping={} idle_ms={} error={:?} peer={pc:?}",
+                stopped(), self.last.elapsed().as_millis(), self.stats.lock().unwrap().error
+            );
             self.close();
         }
     }
@@ -663,6 +730,7 @@ impl Session {
             return;
         }
         self.stop.store(true, Ordering::Relaxed);
+        self.keyframe_pipe = None;
         if let Some(c) = &mut self.capture {
             stop_child(c, false);
             self.exit = c.try_wait().ok().flatten().and_then(|s| s.code());
@@ -694,7 +762,7 @@ impl Session {
             .iter()
             .map(|(k, v)| (k.clone(), v.value()))
             .collect();
-        json!({"id":self.id,"state":state,"error":s.error,"requested":{"width":self.options.width,"height":self.options.height,"fps":self.options.fps,"bitrate":self.options.bitrate,"codec":self.options.requested,"eye":self.options.eye},"encoder":{"device":self.device,"factory":self.factory,"hardware":"Qualcomm Venus","bitrate_requested":self.options.bitrate,"codec":self.options.codec,"fallback_reason":self.options.fallback,"h264_level":if self.options.codec=="h264"{Some(self.level)}else{None}},"capture":s.capture,"capture_age_ms":age(number(&s.capture["captured_ns"]),now()),"capture_errors":s.capture_errors,"capture_program":self.program,"capture_pipe":{"requested_bytes":1048576,"actual_bytes":self.pipe_bytes,"reader_buffer_bytes":1048576,"payload":if self.native{"compressed access units"}else{"NV12"},"input_memory":if self.native{"GPU DMA-BUF -> Venus"}else{"CPU copy"}},"timing":timing,"counts":counts,"phase_latency":{"clock":"device CLOCK_MONOTONIC","unit":"microseconds","scope":"latest up to 300 measured samples per stage; exact PTS match","capture_complete":"GPU/CPU readback completed, before stdout delivery","encoder_output":if self.native{"native appsink entry after hardware encoder and parser"}else{"parser src VCL probe"},"native_encoder":self.native,"end_to_end":false,"pending_pts":s.pending.len(),"pending_limit":1024,"errors":s.phase_errors,"stages":phases},"encoded_pts_unmatched":s.unmatched,"appsrc_flow_errors":s.flow_errors,"appsrc_dropped_confirmed":if s.missing_ordinal==0{Some(if self.native{0}else{s.dropped})}else{None},"appsrc_drop_scope":"source ordinals skipped before later encoder input; pending tail excluded","encoder_missing_source_ordinal":s.missing_ordinal,"appsrc_queued_buffers":self.source.current_level_buffers(),"rtp":s.rtp,"capture_exit":self.exit,"atomic_snapshot":false,"scope":"real readbacks; encoded frames; not physical presentation","gstreamer":gst::version_string().to_string(),"backend":"rust"})
+        json!({"id":self.id,"state":state,"error":s.error,"keyframe_control":{"requests_forwarded":self.keyframe_requests,"pending":self.keyframe_pending.load(Ordering::Acquire)},"requested":{"width":self.options.width,"height":self.options.height,"fps":self.options.fps,"bitrate":self.options.bitrate,"codec":self.options.requested,"eye":self.options.eye},"encoder":{"device":self.device,"factory":self.factory,"hardware":"Qualcomm Venus","bitrate_requested":self.options.bitrate,"codec":self.options.codec,"fallback_reason":self.options.fallback,"h264_level":if self.options.codec=="h264"{Some(self.level)}else{None}},"capture":s.capture,"capture_age_ms":age(number(&s.capture["captured_ns"]),now()),"capture_errors":s.capture_errors,"capture_program":self.program,"capture_pipe":{"requested_bytes":1048576,"actual_bytes":self.pipe_bytes,"reader_buffer_bytes":1048576,"payload":if self.native{"compressed access units"}else{"NV12"},"input_memory":if self.native{"GPU DMA-BUF -> Venus"}else{"CPU copy"}},"timing":timing,"counts":counts,"phase_latency":{"clock":"device CLOCK_MONOTONIC","unit":"microseconds","scope":"latest up to 300 measured samples per stage; exact PTS match","capture_complete":"GPU/CPU readback completed, before stdout delivery","encoder_output":if self.native{"native appsink entry after hardware encoder and parser"}else{"parser src VCL probe"},"native_encoder":self.native,"end_to_end":false,"pending_pts":s.pending.len(),"pending_limit":1024,"errors":s.phase_errors,"stages":phases},"encoded_pts_unmatched":s.unmatched,"appsrc_flow_errors":s.flow_errors,"appsrc_dropped_confirmed":if s.missing_ordinal==0{Some(if self.native{0}else{s.dropped})}else{None},"appsrc_drop_scope":"source ordinals skipped before later encoder input; pending tail excluded","encoder_missing_source_ordinal":s.missing_ordinal,"appsrc_queued_buffers":self.source.current_level_buffers(),"rtp":s.rtp,"capture_exit":self.exit,"atomic_snapshot":false,"scope":"real readbacks; encoded frames; not physical presentation","gstreamer":gst::version_string().to_string(),"backend":"rust"})
     }
 }
 impl Drop for Session {
@@ -957,6 +1025,10 @@ impl Manager {
                 ))
             }
             _ if s.closed => Ok((410, json!({"error":"Session closed"}))),
+            ("POST", "/keyframe") if s.native => {
+                s.keyframe_pending.store(true, Ordering::Release);
+                Ok((200, json!({"requested":true})))
+            }
             ("POST", "/answer") => {
                 let text = v["sdp"]
                     .as_str()

@@ -311,14 +311,20 @@ pub fn observer(t: Arc<Telemetry>) {
             continue;
         };
         let dir = s["directory"].as_str().unwrap_or("");
-        let valid = [
-            "/home/steamos/.local/state/mix-vr-shell-qvr-live/",
-            "/home/steamos/.local/state/mix-vr-shell-controller/",
-        ]
-        .iter()
-        .any(|prefix| {
-            dir.strip_prefix(prefix)
-                .is_some_and(|id| id.starts_with("vr-shell-") && safe_id(id))
+        let home = fs::read_to_string("/etc/passwd").ok().and_then(|passwd| {
+            passwd.lines().find_map(|line| {
+                let fields: Vec<_> = line.split(':').collect();
+                (fields.len() == 7 && fields[2] == "1000" && fields[5].starts_with('/'))
+                    .then(|| fields[5].to_owned())
+            })
+        });
+        let valid = home.as_ref().is_some_and(|home| {
+            ["mix-vr-shell-qvr-live", "mix-vr-shell-controller"]
+                .iter()
+                .any(|name| {
+                    dir.strip_prefix(&format!("{home}/.local/state/{name}/"))
+                        .is_some_and(|id| id.starts_with("vr-shell-") && safe_id(id))
+                })
         });
         if !valid {
             continue;
