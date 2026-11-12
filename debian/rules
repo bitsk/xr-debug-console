@@ -14,7 +14,7 @@ export CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER = riscv64-linux-gnu-gcc
 override_dh_auto_build-arch:
 	test -n "$(RUST_TARGET)"
 	cargo build --locked --offline --release --features webrtc --manifest-path backend/Cargo.toml --target $(RUST_TARGET) --target-dir $(XR_DEBUG_CARGO_TARGET_DIR)
-	if [ "$(DEB_HOST_ARCH)" = arm64 ] && [ "$(XR_DEBUG_NATIVE)" = 1 ]; then dh_auto_configure --buildsystem=cmake --sourcedirectory=native --builddirectory=build/native -- -DCMAKE_INSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH) && cmake --build build/native; fi
+	if [ "$(DEB_HOST_ARCH)" = arm64 ] && [ "$(XR_DEBUG_NATIVE)" = 1 ]; then dh_auto_configure --buildsystem=cmake --sourcedirectory=native --builddirectory=build/native -- -DCMAKE_INSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH) $(if $(XR_OPENVR_INCLUDE_DIR),-DXR_OPENVR_INCLUDE_DIR=$(XR_OPENVR_INCLUDE_DIR)) $(if $(XR_DEBUG_TOOLCHAIN),-DCMAKE_TOOLCHAIN_FILE=$(XR_DEBUG_TOOLCHAIN)) && cmake --build build/native; fi
 override_dh_auto_install:
 	if [ -f "$(XR_DEBUG_CARGO_TARGET_DIR)/$(RUST_TARGET)/release/xr-debug-server" ]; then install -D "$(XR_DEBUG_CARGO_TARGET_DIR)/$(RUST_TARGET)/release/xr-debug-server" debian/tmp/usr/bin/xr-debug-server; fi
 	if [ "$(DEB_HOST_ARCH)" = arm64 ] && [ "$(XR_DEBUG_NATIVE)" = 1 ]; then DESTDIR=$(CURDIR)/debian/native-stage cmake --install build/native; fi
