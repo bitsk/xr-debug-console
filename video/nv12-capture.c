@@ -176,7 +176,7 @@ int main(int argc,char **argv) {
     char identity[256];
     if (geteuid()!=0 || width<0 || width%2 || fps<0 || strncmp(card,"/dev/dri/card",13) ||
         !read_text("/etc/a081-rootfs-id",identity,sizeof(identity)) || strcmp(identity,"a081-steamos-arm64\n") ||
-        !read_text("/proc/device-tree/model",identity,sizeof(identity)) || strcmp(identity,"iQIYI XR MIX (A081)")) return 3;
+        !read_text("/proc/device-tree/model",identity,sizeof(identity)) || strcmp(identity,"iQIYI Qiyu MIX (A081)")) return 3;
     if (eye && width>1832) return 3;
     unsigned source_width=eye ? 1832 : 3664;
     struct capture c={.width=(unsigned)width,.height=(((uint64_t)width*1920+source_width-1)/source_width+1)&~1U,.eye=eye};

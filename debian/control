@@ -2,11 +2,11 @@ Source: xr-debug-console
 Section: misc
 Priority: optional
 Maintainer: openKylin XR SIG <xr@lists.openkylin.top>
-Build-Depends: debhelper-compat (= 13), cargo (>= 1.88), rustc (>= 1.88), pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libgstreamer-plugins-bad1.0-dev, cmake [arm64], g++ [arm64], libdrm-dev [arm64], libvulkan-dev [arm64], libyuv-dev [arm64], libturbojpeg0-dev [arm64], libxr-device-dev [arm64], libopenvr-dev [arm64]
+Build-Depends: debhelper-compat (= 13), cargo (>= 1.88), rustc (>= 1.88), pkg-config, libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev, libgstreamer-plugins-bad1.0-dev, cmake [arm64], g++ [arm64], libdrm-dev [arm64], libvulkan-dev [arm64], libyuv-dev [arm64], libturbojpeg0-dev [arm64], libxr-device-dev (>= 0.1.2) [arm64], libopenvr-dev [arm64]
 Standards-Version: 4.7.0
 Rules-Requires-Root: no
-Vcs-Git: https://gitee.com/bigbits/xr-debug-console.git
-Vcs-Browser: https://gitee.com/bigbits/xr-debug-console
+Vcs-Git: https://github.com/bitsk/xr-debug-console.git
+Vcs-Browser: https://github.com/bitsk/xr-debug-console
 
 Package: xr-debug-server
 Architecture: any
@@ -24,7 +24,7 @@ Description: XR debug console static frontend
 Package: xr-debug-video
 Build-Profiles: <!pkg.xr-debug.server-only>
 Architecture: arm64
-Depends: ${misc:Depends}, ${shlibs:Depends}, xr-debug-server (= ${binary:Version})
+Depends: ${misc:Depends}, ${shlibs:Depends}, xr-debug-server (= ${binary:Version}), gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-nice
 Description: XR NV12 and hardware video capture helpers
  Native CPU and GPU NV12 paths for the existing hardware encoder pipeline.
 

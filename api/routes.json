@@ -13,6 +13,7 @@
     "/api/video-control",
     "/video/",
     "/ws/state",
-    "/api/hands"
+    "/api/hands",
+    "/api/session/{}/keyframe"
   ]
 }

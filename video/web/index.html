@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>MIX · 实时头显画面</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header>
+    <div><span class="eyebrow">QIYU MIX</span><h1>实时头显画面</h1></div>
+    <span id="connection" role="status">尚未连接</span>
+  </header>
+  <main>
+    <form id="controls" class="panel">
+      <label id="token-field">访问密钥<input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="设备上的观看密钥"></label>
+      <div class="presets" aria-label="画质预设"><span>快速预设</span><button type="button" data-preset="fluid">流畅</button><button type="button" data-preset="detail">清晰</button><button type="button" data-preset="native">原生</button></div>
+      <label>编码<select id="codec"><option value="auto">自动 · 优先 H.265</option><option value="h264" selected>H.264</option><option value="h265">H.265 · 不支持时回退</option></select></label>
+      <label>画面<select id="eye"><option value="stereo">双眼并排</option><option value="left">单眼 · 左眼</option><option value="right">单眼 · 右眼</option></select></label>
+      <label>传输分辨率<select id="width"><option value="640">640 × 336</option><option value="960">960 × 504</option><option value="1280" selected>1280 × 672</option><option value="1600">1600 × 840</option><option value="1920">1920 × 1008</option><option value="2560">2560 × 1342</option><option value="3200">3200 × 1678</option><option value="3664">3664 × 1920 · 原生</option></select></label>
+      <label>请求帧率<select id="fps"><option>15</option><option>30</option><option selected>60</option></select></label>
+      <label>目标码率<select id="bitrate"><option value="1000000">1 Mbps</option><option value="2000000">2 Mbps</option><option value="4000000">4 Mbps</option><option value="6000000">6 Mbps</option><option value="8000000" selected>8 Mbps</option><option value="12000000">12 Mbps</option><option value="16000000">16 Mbps</option><option value="20000000">20 Mbps</option><option value="30000000">30 Mbps</option><option value="40000000">40 Mbps</option><option value="60000000">60 Mbps</option><option value="80000000">80 Mbps</option><option value="100000000">100 Mbps</option><option value="custom">自定义…</option></select></label>
+      <label id="custom-field" hidden>自定义 Mbps<input id="custom-bitrate" type="number" min="1" max="100" step="1" value="24" inputmode="numeric"></label>
+      <button id="start" type="submit">开始观看</button>
+      <button id="stop" type="button" disabled>退出观看</button>
+    </form>
+    <p id="quality-hint" class="note"></p>
+    <p id="codec-status" class="note" role="status">编码将在建立会话时协商。</p>
+    <p id="message" role="status">只读观看。实际编码与浏览器帧率见下方，选择值不代表已达到的帧率。</p>
+    <div class="video-toolbar"><span id="capture-mode">画面模式待确认</span><button id="fullscreen" type="button">全屏画面</button></div>
+    <section id="screen" class="screen" aria-label="真实双眼或桌面画面">
+      <video id="video" autoplay muted playsinline></video>
+      <div id="empty">等待真实视频</div>
+    </section>
+    <details class="metric-details"><summary>接收、解码与处理阶段 <span>展开详细统计</span></summary>
+    <div class="measurements">
+      <section class="panel">
+        <h2>浏览器接收与解码</h2>
+        <dl>
+          <dt>编码 / 解码器</dt><dd id="decoder">—</dd>
+          <dt>实际接收 / 解码帧率</dt><dd id="receive-rate">—</dd>
+          <dt>累计接收 / 解码 / 丢帧</dt><dd id="receive-count">—</dd>
+          <dt>累计接收字节 / 码率</dt><dd id="receive-bytes">—</dd>
+          <dt>实际解码尺寸</dt><dd id="decoded-size">—</dd>
+          <dt>硬件解码信息</dt><dd id="power-efficient">—</dd>
+          <dt>抖动缓冲 · 本段均值</dt><dd id="jitter-buffer-delay">—</dd>
+          <dt>解码耗时 · 本段均值</dt><dd id="decode-delay">—</dd>
+          <dt>ICE / STUN 往返时间</dt><dd id="ice-rtt">—</dd>
+        </dl>
+        <p class="note">各阶段独立测量；RTT 是网络往返时间，不是视频单程延迟。浏览器未提供的字段显示为 —。</p>
+      </section>
+      <section class="panel">
+        <h2>浏览器呈现回调</h2>
+        <dl>
+          <dt>呈现帧率 / 回调频率</dt><dd id="present-rate">—</dd>
+          <dt>累计呈现 / 回调次数</dt><dd id="present-count">—</dd>
+          <dt>回调间隔 P50 / P95 / 最大</dt><dd id="present-interval">—</dd>
+          <dt>视频媒体时间</dt><dd id="media-time">—</dd>
+          <dt>距最近视频回调</dt><dd id="frame-age">—</dd>
+        </dl>
+        <p class="note">来自 requestVideoFrameCallback，描述浏览器呈现；不代表显示器物理扫描或头显到屏幕的端到端延迟。</p>
+      </section>
+    </div>
+    <section class="panel phase-latency">
+      <h2>设备处理阶段 · P50 / P95</h2>
+      <dl>
+        <dt>采集完成 → 读完帧</dt><dd id="capture-reader-delay">—</dd>
+        <dt id="reader-stage-label">读完帧 → 编码输出</dt><dd id="reader-encoder-delay">—</dd>
+        <dt>采集完成 → 编码输出</dt><dd id="capture-encoder-delay">—</dd>
+        <dt>编码器输入 → 编码输出</dt><dd id="encoder-delay">—</dd>
+      </dl>
+      <p class="note">设备同一时钟，精确 PTS 对应，最近最多 300 个样本；编码输出含码流解析。原生通路的“采集完成 → 读完帧”包含编码；各行有包含关系，不相加，不代表端到端延迟。</p>
+    </section>
+    </details>
+    <details class="panel"><summary>服务端原始采集与编码统计</summary><pre id="server-stats">尚未收到</pre></details>
+    <footer><span>H.264 / H.265 / WebRTC · 画面断流时不标记为实时</span><a id="maintenance" href="/">维护调试台（JPEG 回退）</a></footer>
+  </main>
+</body>
+</html>

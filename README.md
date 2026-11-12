@@ -3,7 +3,7 @@
 同仓的调试前端、Rust 后端与视频 helpers。
 
 
-构建入口和依赖见下方；工程 Wiki/Blog 与跨仓库规划集中在 [openkylin-xr-docs](https://gitee.com/bigbits/openkylin-xr-docs)。
+构建入口和依赖见下方；工程 Wiki/Blog 与跨仓库规划集中在 [openkylin-xr-docs](https://github.com/bitsk/openkylin-xr-docs)。
 
 ## 目录与构建
 

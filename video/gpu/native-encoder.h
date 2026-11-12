@@ -9,13 +9,15 @@
 #include <stdatomic.h>
 
 static struct {
-    GstElement *pipeline, *source, *sink;
+    GstElement *pipeline, *source, *sink, *encoder;
     GstAllocator *allocator;
     GstBus *bus;
     pthread_mutex_t lock;
     bool busy[4];
     atomic_bool failed;
-    uint64_t origin, submitted, encoded;
+    uint64_t origin, submitted, encoded, next_keyframe_ns;
+    atomic_uint keyframe_requests;
+    bool control_stdin, keyframe_pending;
     struct { uint64_t pts, input_ns; char meta[4096]; } pending[1024];
     const char *codec;
 } enc={.lock=PTHREAD_MUTEX_INITIALIZER};
@@ -62,14 +64,18 @@ static GstFlowReturn native_sample(GstAppSink *sink,void *unused) {
     if (!meta[0]) {fprintf(stderr,"Unmatched native PTS %"PRIu64"\n",GST_BUFFER_PTS(buffer));enc.failed=true;}
     else {
         size_t length=strlen(meta);if (length && meta[length-1]=='}') meta[length-1]=0;
-        printf("%s,\"native_encoder\":true,\"codec\":\"%s\",\"encoder_input_ns\":%"PRIu64",\"encoder_output_ns\":%"PRIu64",\"native_encoded\":%"PRIu64",\"input_memory\":\"vulkan-export-dmabuf-import\",\"nv12_stride\":%u,\"nv12_uv_offset\":%u,\"native_payload_length\":%zu}\n",
-               meta,enc.codec,input_ns,output_ns,encoded,gpu_output_stride,gpu_uv_offset,map.size);
+        printf("%s,\"native_encoder\":true,\"codec\":\"%s\",\"encoder_input_ns\":%"PRIu64",\"encoder_output_ns\":%"PRIu64",\"native_encoded\":%"PRIu64",\"keyframe_requests\":%u,\"input_memory\":\"vulkan-export-dmabuf-import\",\"nv12_stride\":%u,\"nv12_uv_offset\":%u,\"native_payload_length\":%zu}\n",
+               meta,enc.codec,input_ns,output_ns,encoded,atomic_load(&enc.keyframe_requests),gpu_output_stride,gpu_uv_offset,map.size);
         if (fwrite(map.data,1,map.size,stdout)!=map.size) enc.failed=true;
     }
     gst_buffer_unmap(buffer,&map);gst_sample_unref(sample);
     return enc.failed ? GST_FLOW_ERROR : GST_FLOW_OK;
 }
 static bool native_init(const char *codec,unsigned width,unsigned height,unsigned fps,unsigned bitrate) {
+    if (enc.control_stdin) {
+        int flags=fcntl(STDIN_FILENO,F_GETFL);
+        if (flags<0 || fcntl(STDIN_FILENO,F_SETFL,flags|O_NONBLOCK)<0) return false;
+    }
     gst_init(NULL,NULL);enc.codec=codec;enc.origin=ns();
     // Venus driver pads NV12 pitch to 128 and luma scanlines to 32. VideoMeta
     // advertises the actual layout; dmabuf-import must accept it, never copy.
@@ -111,13 +117,13 @@ static bool native_init(const char *codec,unsigned width,unsigned height,unsigne
         "height",G_TYPE_INT,height,"framerate",GST_TYPE_FRACTION,fps,1,"colorimetry",G_TYPE_STRING,"bt601",
         "interlace-mode",G_TYPE_STRING,"progressive","pixel-aspect-ratio",GST_TYPE_FRACTION,1,1,NULL);
     gst_app_src_set_caps(GST_APP_SRC(enc.source),caps);gst_caps_unref(caps);
-    GstElement *encoder=gst_bin_get_by_name(GST_BIN(enc.pipeline),"encoder");
+    GstElement *encoder=enc.encoder=gst_bin_get_by_name(GST_BIN(enc.pipeline),"encoder");
     GstStructure *controls=gst_structure_new("controls","video_bitrate",G_TYPE_INT,bitrate,
         "video_gop_size",G_TYPE_INT,fps,h265?"hevc_profile":"h264_profile",G_TYPE_INT,h265?0:1,
         h265?"hevc_level":"h264_level",G_TYPE_INT,h265?8:high?15:13,NULL);
     g_object_set(encoder,"extra-controls",controls,NULL);gst_structure_free(controls);
     GstPad *input=gst_element_get_static_pad(encoder,"sink");
-    gst_pad_add_probe(input,GST_PAD_PROBE_TYPE_BUFFER,native_input,NULL,NULL);gst_object_unref(input);gst_object_unref(encoder);
+    gst_pad_add_probe(input,GST_PAD_PROBE_TYPE_BUFFER,native_input,NULL,NULL);gst_object_unref(input);
     g_signal_connect(enc.sink,"new-sample",G_CALLBACK(native_sample),NULL);
     enc.allocator=gst_dmabuf_allocator_new();enc.bus=gst_element_get_bus(enc.pipeline);
     return gst_element_set_state(enc.pipeline,GST_STATE_PLAYING)!=GST_STATE_CHANGE_FAILURE;
@@ -128,6 +134,27 @@ static int native_slot(int previous) {
     pthread_mutex_unlock(&enc.lock);return selected;
 }
 static bool native_push(int slot,const char *meta,uint64_t captured,unsigned width,unsigned height) {
+    /* The owning WebRTC process forwards recovery requests over its pipe.
+     * Coalesce bursts without inserting large sync pictures on a timer.
+     */
+    if (enc.control_stdin) {
+        char commands[64];
+        ssize_t length=read(STDIN_FILENO,commands,sizeof(commands));
+        if (length<0 && errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR) {
+            enc.failed=true;return false;
+        }
+        for (ssize_t i=0;i<length;i++) if (commands[i]=='K') enc.keyframe_pending=true;
+    }
+    if (enc.keyframe_pending && enc.submitted && captured >= enc.next_keyframe_ns) {
+        GstEvent *event=gst_video_event_new_upstream_force_key_unit(
+            GST_CLOCK_TIME_NONE,TRUE,atomic_fetch_add(&enc.keyframe_requests,1)+1);
+        if (!gst_element_send_event(enc.encoder,event)) {
+            fprintf(stderr,"Native encoder rejected sync-frame request\n");
+            enc.failed=true;return false;
+        }
+        enc.keyframe_pending=false;
+        enc.next_keyframe_ns=captured+GST_SECOND/4;
+    }
     int fd=fcntl(gpu.export_fd,F_DUPFD_CLOEXEC,0);if(fd<0)return false;
     GstMemory *memory=gst_dmabuf_allocator_alloc(enc.allocator,fd,gpu.output_bytes);
     if (!memory) {close(fd);return false;}
@@ -149,6 +176,7 @@ static void native_finish(void) {
     if (enc.pipeline) gst_element_set_state(enc.pipeline,GST_STATE_NULL);
     if (enc.source) gst_object_unref(enc.source);
     if (enc.sink) gst_object_unref(enc.sink);
+    if (enc.encoder) gst_object_unref(enc.encoder);
     if (enc.bus) gst_object_unref(enc.bus);
     if (enc.pipeline) gst_object_unref(enc.pipeline);
     if (enc.allocator) gst_object_unref(enc.allocator);

@@ -142,6 +142,10 @@ int main(int argc,char **argv) {
         else if (!strcmp(argv[i],"--codec")) codec=argv[i+1];
         else if (!strcmp(argv[i],"--bitrate")) bitrate=number(argv[i+1],1000000,100000000);
         else if (!strcmp(argv[i],"--frames")) limit=number(argv[i+1],1,10000);
+        else if (!strcmp(argv[i],"--keyframe-stdin")) {
+            if (strcmp(argv[i+1],"1")) return 2;
+            enc.control_stdin=true;
+        }
         else if (!strcmp(argv[i],"--eye")) {
             if (!strcmp(argv[i+1],"left")) eye=1;
             else if (!strcmp(argv[i+1],"right")) eye=2;
@@ -151,8 +155,8 @@ int main(int argc,char **argv) {
     }
     char identity[256];
     if (geteuid()!=0 || width<0 || width%4 || fps<0 || strncmp(card,"/dev/dri/card",13) ||
-        !read_text("/etc/a081-rootfs-id",identity,sizeof(identity)) || strcmp(identity,"a081-steamos-arm64\n") ||
-        !read_text("/proc/device-tree/model",identity,sizeof(identity)) || strcmp(identity,"iQIYI XR MIX (A081)")) return 3;
+        !read_text("/etc/a081-rootfs-id",identity,sizeof(identity)) || (strcmp(identity,"a081-steamos-arm64\n") && strcmp(identity,"a081-debian-trixie-arm64\n") && strcmp(identity,"a081-openkylin-3.0-arm64\n")) ||
+        !read_text("/proc/device-tree/model",identity,sizeof(identity)) || strcmp(identity,"iQIYI Qiyu MIX (A081)")) return 3;
     if (eye && width>1832) return 3;
     unsigned source_width=eye ? 1832 : 3664;
     struct capture c={.width=(unsigned)width,.height=(((uint64_t)width*1920+source_width-1)/source_width+1)&~1U,.eye=eye};
@@ -183,8 +187,11 @@ int main(int argc,char **argv) {
         else if (!result) {
             bool duplicate=have_previous && memcmp(previous,c.nv12,codec ? gpu.output_bytes : bytes)==0;
             bool new_sequence=c.sequence_valid && (!have_previous || c.crtc!=last_crtc || c.sequence>last_sequence);
-            bool publish=!duplicate && new_sequence;
-            if (duplicate) ++duplicates;
+            // Native video needs a continuous timeline even when the desktop is
+            // still. Each submission remains a fresh read of a new KMS vblank;
+            // never synthesize frames from the previous output buffer.
+            bool publish=new_sequence && (codec || !duplicate);
+            if (duplicate && !publish) ++duplicates;
             if (!new_sequence) ++sequence_skipped;
             if (publish) { if (codec) { previous=c.nv12;previous_slot=slot; } else memcpy(previous,c.nv12,bytes); have_previous=true; last_sequence=c.sequence; last_crtc=c.crtc; ++delivered; }
             char metadata[4096];

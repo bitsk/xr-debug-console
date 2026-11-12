@@ -1,3 +1,9 @@
+xr-debug-console (0.1.2) unstable; urgency=medium
+
+  * Unify native builds and restore camera previews and on-demand encoder recovery.
+
+ -- bits <bigbits@hackx.cc>  Thu, 12 Nov 2026 19:14:34 +0800
+
 xr-debug-console (0.1.1) unstable; urgency=medium
 
   * Show live optical hand validity gestures landmarks and software latency.
