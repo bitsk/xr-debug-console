@@ -25,3 +25,22 @@
 当前迁移不自动启用竞争采集、切换活动运行时或写设备启动分区；已有验证基线继续保留。
 
 依赖准备：设置专用 CARGO_HOME 后运行 tools/prepare-dependencies.sh；包构建复用同一缓存并使用 offline 模式。开发目录直接运行后端时，XR_DEBUG_WEB_ROOT 指定 frontend/；安装包默认读取 /usr/share/xr/debug。
+
+## 光学手追状态
+
+`GET /api/hands`、`/api/state.hand_tracking` 和 `/ws/state` 复用同一只读快照。
+后端仅启动已安装组件的 `xr-hand-status --follow`，不复制手追的二进制协议，
+不打开相机、不启动或控制手追。缺少可选观察器时返回 observer_unavailable。
+状态区分连接、新鲜度及左右手的有效姿态；过期或断连后清空手势和位置，
+浏览器再结合传输年龄上界执行本地失效。`detected` 仅表示最后一帧的来源标志，
+`valid` 才是当前有效性。软件延迟为曝光到状态发布，不含屏幕扫描或完整有效手检测保证。
+发布率按实际收到的去重状态包计数，不能把相机帧序号跳跃当成手追推理帧率。
+
+页面在“空间与输入”显示左右手捏合/抓握状态、位置、软件延迟、年龄、序号，
+并在原有三维空间叠加有效的 21 个模型关键点；不会声称这些是从 OpenXR 回读的 26 关节。
+`openxr_joint_count=26` 说明已集成的标准接口布局，五掌骨的几何估计来源保持明确。
+
+仅更新服务端和网页时可使用标准构建 profile `pkg.xr-debug.server-only`，
+复用已准备的目标 GStreamer sysroot 和 Cargo 缓存，不重建未修改的视频/native helpers。
+`XR_DEBUG_CARGO_TARGET_DIR`、`XR_DEBUG_TARGET_RUSTFLAGS`、`XR_CROSS_LIBDIR` 和
+`XR_CROSS_SHLIBS` 可提供交叉编译输入；默认完整构建仍包含原生工具。

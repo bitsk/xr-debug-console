@@ -293,7 +293,7 @@
         </div>
 
         <div class="scene-wrap">
-          <canvas id="scene" role="img" aria-label="统一追踪空间：头显、左右手柄与运动轨迹；拖动旋转，滚轮缩放"></canvas>
+          <canvas id="scene" role="img" aria-label="统一追踪空间：头显、光学双手、手柄与运动轨迹；拖动旋转，滚轮缩放"></canvas>
           <div class="scene-top">
             <span id="coordinate" class="scene-tag">共同追踪原点 · 米</span>
             <span id="euler-hud" class="scene-tag mono">R —° · P —° · Y —°</span>
@@ -342,6 +342,7 @@
         </div>
       </section>
 
+<section class="panel hand-tracking-panel" id="hand-tracking-panel" aria-label="光学手追状态"><div class="panel-head"><div class="panel-title-group"><h2>双手追踪与手势</h2><span id="hands-stream-state" class="pill subtle">等待手追</span></div><span class="muted">只读观察</span></div><div class="hand-stream-metrics"><div><small>曝光 → 发布</small><strong id="hands-latency">—</strong></div><div><small>样本年龄</small><strong id="hands-age">—</strong></div><div><small>状态发布率</small><strong id="hands-rate">—</strong></div><div><small>帧序号</small><strong id="hands-sequence">—</strong></div></div><div class="controllers-grid"><article class="device hand-card"><div class="device-title"><span class="device-icon left">L</span><h3>左手</h3><span id="hand-left-state" class="badge">等待数据</span></div><div class="hand-gesture"><label>捏合 <strong id="hand-left-pinch">—</strong></label><meter id="hand-left-pinch-meter" min="0" max="1" value="0" aria-label="左手捏合程度"></meter><label>抓握 <strong id="hand-left-grab">—</strong></label><meter id="hand-left-grab-meter" min="0" max="1" value="0" aria-label="左手抓握程度"></meter></div><dl class="telemetry-grid"><div><dt>手掌位置 XYZ (m)</dt><dd id="hand-left-grip">—</dd></div><div><dt>瞄准起点 XYZ (m)</dt><dd id="hand-left-aim">—</dd></div></dl><p class="reason" id="hand-left-reason">等待手追服务</p></article><article class="device hand-card"><div class="device-title"><span class="device-icon right">R</span><h3>右手</h3><span id="hand-right-state" class="badge">等待数据</span></div><div class="hand-gesture"><label>捏合 <strong id="hand-right-pinch">—</strong></label><meter id="hand-right-pinch-meter" min="0" max="1" value="0" aria-label="右手捏合程度"></meter><label>抓握 <strong id="hand-right-grab">—</strong></label><meter id="hand-right-grab-meter" min="0" max="1" value="0" aria-label="右手抓握程度"></meter></div><dl class="telemetry-grid"><div><dt>手掌位置 XYZ (m)</dt><dd id="hand-right-grip">—</dd></div><div><dt>瞄准起点 XYZ (m)</dt><dd id="hand-right-aim">—</dd></div></dl><p class="reason" id="hand-right-reason">等待手追服务</p></article></div><p class="hand-source-note" id="hands-source-note">等待手追服务；页面不启动相机或手追。</p><p class="hand-source-note">三维视图显示 21 个模型关键点。原生 OpenXR 接口提供 26 关节，其中 5 个掌骨位置由几何估计；此处不将它们标为独立检测点。</p></section>
       <!-- 双手柄可视化检视面板 -->
       <aside class="panel devices" aria-label="双手柄状态检视">
         <div class="panel-head">

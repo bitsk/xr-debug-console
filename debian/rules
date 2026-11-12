@@ -1,6 +1,8 @@
 #!/usr/bin/make -f
 include /usr/share/dpkg/default.mk
-export RUSTFLAGS = --remap-path-prefix=$(CURDIR)=/usr/src/xr-debug-console
+export RUSTFLAGS = --remap-path-prefix=$(CURDIR)=/usr/src/xr-debug-console $(XR_DEBUG_TARGET_RUSTFLAGS)
+XR_DEBUG_CARGO_TARGET_DIR ?= target
+XR_DEBUG_NATIVE = $(if $(filter pkg.xr-debug.server-only,$(DEB_BUILD_PROFILES)),0,1)
 RUST_TARGET_arm64 = aarch64-unknown-linux-gnu
 RUST_TARGET_amd64 = x86_64-unknown-linux-gnu
 RUST_TARGET_riscv64 = riscv64gc-unknown-linux-gnu
@@ -11,9 +13,13 @@ export CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER = riscv64-linux-gnu-gcc
 	dh $@ --buildsystem=none
 override_dh_auto_build-arch:
 	test -n "$(RUST_TARGET)"
-	cargo build --locked --offline --release --features webrtc --manifest-path backend/Cargo.toml --target $(RUST_TARGET) --target-dir target
-	if [ "$(DEB_HOST_ARCH)" = arm64 ]; then dh_auto_configure --buildsystem=cmake --sourcedirectory=native --builddirectory=build/native -- -DCMAKE_INSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH) && cmake --build build/native; fi
+	cargo build --locked --offline --release --features webrtc --manifest-path backend/Cargo.toml --target $(RUST_TARGET) --target-dir $(XR_DEBUG_CARGO_TARGET_DIR)
+	if [ "$(DEB_HOST_ARCH)" = arm64 ] && [ "$(XR_DEBUG_NATIVE)" = 1 ]; then dh_auto_configure --buildsystem=cmake --sourcedirectory=native --builddirectory=build/native -- -DCMAKE_INSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH) && cmake --build build/native; fi
 override_dh_auto_install:
-	if [ "$(DEB_HOST_ARCH)" = arm64 ]; then DESTDIR=$(CURDIR)/debian/native-stage cmake --install build/native; fi
+	if [ -f "$(XR_DEBUG_CARGO_TARGET_DIR)/$(RUST_TARGET)/release/xr-debug-server" ]; then install -D "$(XR_DEBUG_CARGO_TARGET_DIR)/$(RUST_TARGET)/release/xr-debug-server" debian/tmp/usr/bin/xr-debug-server; fi
+	if [ "$(DEB_HOST_ARCH)" = arm64 ] && [ "$(XR_DEBUG_NATIVE)" = 1 ]; then DESTDIR=$(CURDIR)/debian/native-stage cmake --install build/native; fi
 override_dh_auto_clean:
 	rm -rf target build debian/native-stage
+
+override_dh_shlibdeps:
+	dh_shlibdeps $(if $(XR_CROSS_LIBDIR),-l$(XR_CROSS_LIBDIR)) -- $(if $(XR_CROSS_SHLIBS),-L$(XR_CROSS_SHLIBS))

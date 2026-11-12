@@ -29,6 +29,7 @@ pub struct Data {
 }
 pub struct Telemetry {
     pub data: Mutex<Data>,
+    pub hands:Mutex<super::hands::Hands>,
     pub requested: AtomicU64,
     pub live: bool,
     pub replay: Option<PathBuf>,
@@ -47,6 +48,7 @@ impl Telemetry {
         explicit_boot: Option<String>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            hands:Mutex::new(super::hands::Hands::default()),
             data: Mutex::new(Data {
                 head: json!({"valid":false,"reasons":["no_source"]}),
                 observed: 0,
@@ -69,6 +71,7 @@ impl Telemetry {
         let a = self.clone();
         std::thread::spawn(move || a.head_loop());
         if self.live {
+            let a=self.clone();std::thread::spawn(move ||super::hands::observe(a));
             let a = self.clone();
             std::thread::spawn(move || a.controller_loop());
             let a = self.clone();
@@ -344,7 +347,7 @@ impl Telemetry {
         } else {
             json!({"available":false,"reason":"no_fresh_openvr_sample"})
         };
-        json!({"mode":if self.replay.is_some(){"replay"}else if self.live{"live"}else{"offline"},"session":d.session,"head":head,"native_frames":native,"packet_hz":rate,"controllers":d.controllers.snapshot(),"system":d.system,"source":self.replay.as_deref().unwrap_or(&self.session_file),"read_only":true,"generated_monotonic_ns":n.to_string(),"backend":"rust"})
+        json!({"mode":if self.replay.is_some(){"replay"}else if self.live{"live"}else{"offline"},"session":d.session,"head":head,"hand_tracking":self.hands.lock().unwrap().snapshot(self.live),"native_frames":native,"packet_hz":rate,"controllers":d.controllers.snapshot(),"system":d.system,"source":self.replay.as_deref().unwrap_or(&self.session_file),"read_only":true,"generated_monotonic_ns":n.to_string(),"backend":"rust"})
     }
 }
 pub fn decode_head(p: &[u8], t: u64) -> Option<Value> {

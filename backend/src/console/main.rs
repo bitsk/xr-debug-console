@@ -2,6 +2,7 @@
 mod control;
 mod controllers;
 mod http;
+mod hands;
 mod load;
 mod preview;
 mod screen;
@@ -239,6 +240,7 @@ impl App {
                 };
                 http::websocket(stream, &r, &self.origin, || self.snapshot())
             }
+            ("GET", "/api/hands") => http::json_reply(&mut stream, 200, &self.snapshot()["hand_tracking"], false),
             ("GET", "/api/state") => http::json_reply(&mut stream, 200, &self.snapshot(), false),
             ("GET", "/api/cameras") => {
                 unsafe {
@@ -326,7 +328,7 @@ fn capture_valid(p: &Path, screen: bool) -> bool {
         ]
         .contains(&p.to_str().unwrap_or(""))
     } else {
-        p == Path::new("/usr/lib/aarch64-linux-gnu/xr/debug/capture") || p == Path::new("/opt/mix-debug-console/capture")
+        p == Path::new("/usr/lib/aarch64-linux-gnu/xr/debug/capture") || p == Path::new("/opt/mix-debug-console/capture") || p == Path::new("/opt/qiyu-debug/capture")
     };
     if !allowed {
         return false;
@@ -443,13 +445,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if live
         && (unsafe { libc::geteuid() } != 0
             || std::env::consts::ARCH != "aarch64"
-            || text("/etc/a081-rootfs-id") != "a081-steamos-arm64"
+            || !["a081-steamos-arm64","a081-debian-trixie-arm64","a081-openkylin-3.0-arm64"].contains(&text("/etc/a081-rootfs-id").as_str())
             || fs::read("/proc/device-tree/model")?
                 .strip_suffix(&[0])
                 .unwrap_or(&[])
-                != b"iQIYI XR MIX (A081)")
+                != b"iQIYI Qiyu MIX (A081)")
     {
-        return Err("Live mode requires root on identified A081 SteamOS".into());
+        return Err("Live mode requires root on identified A081 system".into());
     }
     let token_path = PathBuf::from(options.get("--token-file").ok_or("--token-file required")?);
     if !trusted(&token_path, unsafe { libc::geteuid() }, true) {

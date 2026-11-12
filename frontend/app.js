@@ -164,6 +164,35 @@ function renderControllers(s) {
   }
 }
 
+function handTrackingView(now=performance.now()) {
+  const t=state?.hand_tracking,elapsed=Math.max(0,now-received)+deliveryAgeBound;
+  const fresh=state?.mode==='live'&&t?.source==='live'&&t.fresh===true&&Number.isFinite(t.valid_for_ms)&&elapsed<t.valid_for_ms;
+  return {stream:t,fresh,hands:(t?.hands||[]).map(h=>({...h,valid:fresh&&h.valid===true}))};
+}
+function renderHands(now=performance.now()) {
+  const v=handTrackingView(now),t=v.stream;
+  const names={offline:'离线模式',observer_unavailable:'观察器未安装',disconnected:'手追未连接',waiting:'等待手追',replay:'历史数据',stale:'数据过期'};
+  $('hands-stream-state').textContent=v.fresh?'状态流在线':names[t?.status]||(t?.connected?'数据过期':'等待手追');
+  $('hands-stream-state').className='pill '+(v.fresh?'live':'subtle');
+  $('hands-latency').textContent=v.fresh?num(t.exposure_to_publication_ms,1)+' ms':'—';
+  $('hands-age').textContent=v.fresh?num(t.age_ms+Math.max(0,now-received)+deliveryAgeBound,1)+' ms':'—';
+  $('hands-rate').textContent=v.fresh?num(t.packet_hz,1)+' Hz':'—';
+  $('hands-sequence').textContent=t?.sequence??'—';
+  $('hands-source-note').textContent=v.fresh?'实时手追 · 与头部定位共享采集 · 延迟为软件曝光到状态发布，不含显示扫描。':'等待有效实时手追数据；页面不启动相机或手追。';
+  for(const side of ['left','right']) {
+    const h=v.hands.find(h=>h.hand===side),valid=Boolean(h?.valid);
+    const badge=$('hand-'+side+'-state');badge.textContent=valid?'追踪有效':v.fresh?'无有效手姿':'不可用';badge.className='badge '+(valid?'live':'');
+    for(const [key,active] of [['pinch','pinching'],['grab','grabbing']]) {
+      const score=valid&&Number.isFinite(h[key])?Math.max(0,Math.min(1,h[key])):0;
+      $('hand-'+side+'-'+key).textContent=valid?(h[active]?'按住 · ':'')+Math.round(score*100)+'%':'—';
+      $('hand-'+side+'-'+key+'-meter').value=score;
+    }
+    $('hand-'+side+'-grip').textContent=valid?vec(h.grip?.slice(0,3)):'—';
+    $('hand-'+side+'-aim').textContent=valid?vec(h.aim?.slice(0,3)):'—';
+    $('hand-'+side+'-reason').textContent=valid?'捏合：点击/拖动 · 抓握：6DoF 抓取/双手缩放':v.fresh?'服务在线，当前没有有效手部输出。':'断连或数据过期时隐藏关节并清空手势。';
+  }
+}
+
 function render(s){
   const h=s.head, replay=s.mode==='replay';
   mixDashboard.lastSystem=s.system;mixDashboard.pose(s,deliveryAgeBound);
@@ -196,6 +225,7 @@ function render(s){
   $('warning').textContent=h.warning_flags==null?'—':'0x'+h.warning_flags.toString(16);
   $('sequence').textContent=h.sequence??'—';$('source-name').textContent=replay?'历史 QVR 数据':s.mode==='offline'?'未接入':'QVR / FastRPC';
   renderControllers(s);
+  renderHands();
   updateSceneSamples(s);
   if(previewTransport==='jpeg') {
     const pr=s.preview;
@@ -221,6 +251,8 @@ function closeTelemetry(label, retry=true){
   received=-Infinity;
   for(const t of Object.values(sceneTracks))t.continuous=false;
   if(state?.head)state.head.valid=false;
+  if(state?.hand_tracking)state.hand_tracking.fresh=false;
+  renderHands();
   $('connection').textContent=label;
   if(retry&&pageActive&&!document.hidden){
     reconnectTimer=setTimeout(connectTelemetry,retryDelay);
@@ -446,6 +478,7 @@ function fitScene(){
   const poses=[];const head=poseView().displayHead;
   if(finitePose(head))poses.push(head.position);
   for(const c of state?.controllers||[])if(controllerView(c).valid)poses.push(c.position);
+  for(const h of handTrackingView().hands)if(h.valid&&Array.isArray(h.landmarks))poses.push(...h.landmarks);
   if(!poses.length)return;
   const lo=[0,1,2].map(i=>Math.min(...poses.map(p=>p[i]))),hi=[0,1,2].map(i=>Math.max(...poses.map(p=>p[i])));
   sceneCenter=lo.map((v,i)=>(v+hi[i])/2);
@@ -586,6 +619,15 @@ function draw(){
     }
   }
   drawControllers();
+  const optical=handTrackingView(now);
+  for(const hand of optical.hands) {
+    if(!hand.valid||!Array.isArray(hand.landmarks)||hand.landmarks.length!==21||!hand.landmarks.every(p=>Array.isArray(p)&&p.length===3&&p.every(Number.isFinite)))continue;
+    const p=hand.landmarks,color=hand.hand==='left'?sceneColors.left:sceneColors.right;
+    for(const chain of [[5,6,7,0],[5,8,9,10,1],[5,11,12,13,2],[5,14,15,16,3],[5,17,18,19,4],[8,11,14,17]])for(let i=1;i<chain.length;i++)line(p[chain[i-1]],p[chain[i]],color,2.2);
+    for(const point of p){const v=project(point);if(v){ctx.beginPath();ctx.arc(v[0],v[1],2.6,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();}}
+    labelAt(project(p[20]),(hand.hand==='left'?'左':'右')+'手 · 光学手追',color);
+  }
+  renderHands(now);
   if(state)renderControllers(state);
   drawChart();requestAnimationFrame(draw);
 }

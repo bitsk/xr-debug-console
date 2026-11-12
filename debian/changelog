@@ -1,3 +1,9 @@
+xr-debug-console (0.1.1) unstable; urgency=medium
+
+  * Show live optical hand validity gestures landmarks and software latency.
+
+ -- bits <bigbits@hackx.cc>  Thu, 12 Nov 2026 15:38:36 +0800
+
 xr-debug-console (0.1.0) unstable; urgency=medium
 
   * Import independently maintained XR component and packaging.

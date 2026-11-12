@@ -12,6 +12,7 @@
     "/api/stop",
     "/api/video-control",
     "/video/",
-    "/ws/state"
+    "/ws/state",
+    "/api/hands"
   ]
 }

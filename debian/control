@@ -11,6 +11,7 @@ Vcs-Browser: https://gitee.com/bigbits/xr-debug-console
 Package: xr-debug-server
 Architecture: any
 Depends: ${misc:Depends}, ${shlibs:Depends}, xr-debug-web (= ${binary:Version})
+Suggests: xr-hand-tracking (>= 0.1.2)
 Description: XR telemetry and debug backend
  Independently maintained XR component for openKylin integration.
 
@@ -21,12 +22,14 @@ Description: XR debug console static frontend
  Independently maintained XR component for openKylin integration.
 
 Package: xr-debug-video
+Build-Profiles: <!pkg.xr-debug.server-only>
 Architecture: arm64
 Depends: ${misc:Depends}, ${shlibs:Depends}, xr-debug-server (= ${binary:Version})
 Description: XR NV12 and hardware video capture helpers
  Native CPU and GPU NV12 paths for the existing hardware encoder pipeline.
 
 Package: xr-debug-tools
+Build-Profiles: <!pkg.xr-debug.server-only>
 Architecture: arm64
 Depends: ${misc:Depends}, ${shlibs:Depends}
 Description: XR camera and presentation observation tools
