@@ -25,7 +25,7 @@
     const dot = document.createElement('span');
     dot.className = 'dot idle';
     const title = document.createElement('h3');
-    title.textContent = slot < 4 ? `相机 ${slot} · ${group < 3 ? '相位 '+group : '未分类'}` : `透视${slot === 4 ? '右' : '左'} · ${slot} · IMX471`;
+    title.textContent = slot < 4 ? `相机 ${slot} · ${group < 3 ? '相位 '+group : '未分类'}` : `透视${slot === 4 ? '左' : '右'} · ${slot} · IMX471`;
     title.prepend(dot);
 
     const headRight = document.createElement('div');
@@ -182,9 +182,20 @@
         });
         if (generation !== current) return;
         const count = status.streams.filter(c => c.state === 'live' && (streamMask() & (1 << c.id))).length;
-        summary.textContent = `${count} 路用途流有新图像 · Rust`;
+        summary.textContent = `${count} 路用途流有新图像 · Rust${status.concurrent_six_active ? ' · 六路相机同时有图' : ''}`;
         summary.className = 'pill subtle ' + (count > 0 ? 'live' : '');
+        for (const camera of status.cameras || []) {
+          if (camera.slot >= 4 && camera.state !== 'live') {
+            const row = rows[camera.slot+12];
+            if (!row.expires) row.empty.textContent = '未收到彩透帧 · 需要会话开启彩透采集';
+          }
+        }
+        if (grid.dataset.filter === 'imx') {
+          note.textContent = status.error ? `预览源：${status.error}` :
+            '双目彩透诊断预览，未经白平衡与畸变校正。观看按钮订阅会话采集的图像；相机由会话统一管理。';
+        } else {
         note.textContent = status.error ? `预览源：${status.error}` : '同一相机按 QCFT 三相分流：短 0、短 1、长 2；短相不等于左右手。用途未确认帧单列；相位关联不代表 LED 同步或定位通过。原始像素预览，非 H.264。';
+        }
       }
     } catch (error) {
       if (generation === current && running && !document.hidden) {
