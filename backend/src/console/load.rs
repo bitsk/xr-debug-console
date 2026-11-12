@@ -329,7 +329,7 @@ pub fn observer(t: Arc<Telemetry>) {
         if !valid {
             continue;
         }
-        let mut c = Command::new(t.root.join("vr-timing"));
+        let mut c = Command::new("/usr/lib/aarch64-linux-gnu/xr/debug/tools/vr-timing");
         c.arg("86400")
             .arg(pid.file_name().unwrap())
             .arg(&t.session_file)

@@ -241,7 +241,7 @@ impl Session {
     fn new(o: Options, program: PathBuf, lease: File, generation: u64) -> Result<Self, String> {
         init()?;
         let (factory, device) = venus(&o.codec)?;
-        let native = program == PathBuf::from("/opt/mix-remote-video-gpu/nv12-capture-gpu");
+        let native = matches!(program.to_str(), Some("/usr/lib/aarch64-linux-gnu/xr/debug/video/nv12-capture-gpu") | Some("/opt/mix-remote-video-gpu/nv12-capture-gpu"));
         let (level, level_control) =
             if o.width * o.height > 2073600 || o.width > 1920 || o.bitrate > 50_000_000 {
                 ("5.1", 15i32)
@@ -552,7 +552,7 @@ impl Session {
             }
             cmd.env(
                 "VK_DRIVER_FILES",
-                "/opt/mix-steamvr-turnip/share/vulkan/icd.d/freedreno_icd.aarch64.json",
+                "/usr/lib/aarch64-linux-gnu/xr-mesa/icd.d/freedreno_icd.aarch64.json",
             )
             .env("DISABLE_GAMESCOPE_WSI", "1");
         }

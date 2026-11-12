@@ -1,3 +1,9 @@
+xr-debug-console (0.1.3) unstable; urgency=medium
+
+  * Bind encoded GPU video, web assets and telemetry to installed package paths.
+
+ -- bits <bigbits@hackx.cc>  Thu, 12 Nov 2026 20:59:45 +0800
+
 xr-debug-console (0.1.2) unstable; urgency=medium
 
   * Unify native builds and restore camera previews and on-demand encoder recovery.

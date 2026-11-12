@@ -11,10 +11,15 @@ pub fn selection(config: &Path) -> Option<Value> {
         let Some(d) = session(&p) else { continue };
         let trial = d["trial"].as_str().unwrap_or("");
         let endpoint = d["controller_pose_socket"].as_str().unwrap_or("");
+        let raw = d["raw"].as_str().unwrap_or("");
+        let raw_valid = raw.starts_with("/opt/")
+            && raw.ends_with(&format!("/tracking/runs/{trial}"))
+            && !Path::new(raw).components().any(|part| matches!(part,
+                std::path::Component::ParentDir | std::path::Component::CurDir));
         if d["controller_plan"].is_null()
             || !trial.starts_with("vr-shell-")
             || !safe_id(trial)
-            || d["raw"] != format!("/opt/mix-vr-shell-controller/tracking/runs/{trial}")
+            || !raw_valid
             || !endpoint
                 .strip_prefix("/run/a081-controller-pose-")
                 .and_then(|s| s.strip_suffix("/tracking.sock"))

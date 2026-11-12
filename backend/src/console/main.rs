@@ -477,7 +477,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Untrusted capture program".into());
     }
     let asset_root = if screen {
-        root.join("web")
+        root.join("video")
     } else {
         root.clone()
     };
