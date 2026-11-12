@@ -10,6 +10,7 @@ use std::{
 };
 #[derive(Default)]
 pub struct Hands {
+    pub service: Value,
     packet: Value,
     connected: bool,
     observed: u64,
@@ -33,6 +34,11 @@ impl Hands {
             && t < until;
         let status = if !live {
             "offline"
+        } else if !fresh_
+            && fresh(number(&self.service["observed_ns"]), now(), 5_000_000_000)
+            && self.service["state"] == "failed"
+        {
+            "service_failed"
         } else if !self.connected {
             if self.error.is_empty() {
                 "waiting"
@@ -58,7 +64,7 @@ impl Hands {
         } else {
             None
         };
-        json!({"status":status,"connected":self.connected,"fresh":fresh_,"source":p["source"],"sequence":p["sequence"],"producer_pid":p["producer_pid"],"age_ms":age(exposure,t),"observer_age_ms":age(self.observed,now()),"exposure_to_publication_ms":if decoded>=exposure&&exposure>0{json!((decoded-exposure)as f64/1e6)}else{Value::Null},"valid_for_ms":if fresh_{json!(until.saturating_sub(t)as f64/1e6)}else{json!(0)},"packet_hz":hz,"model_landmark_count":21,"openxr_joint_count":26,"joint_source":"model landmarks; five OpenXR metacarpals are anatomical estimates","coordinate_space":"raw OpenVR driver world, before recenter","hands":hands,"read_only":true})
+        json!({"status":status,"service":self.service,"connected":self.connected,"fresh":fresh_,"source":p["source"],"sequence":p["sequence"],"producer_pid":p["producer_pid"],"age_ms":age(exposure,t),"observer_age_ms":age(self.observed,now()),"exposure_to_publication_ms":if decoded>=exposure&&exposure>0{json!((decoded-exposure)as f64/1e6)}else{Value::Null},"valid_for_ms":if fresh_{json!(until.saturating_sub(t)as f64/1e6)}else{json!(0)},"packet_hz":hz,"model_landmark_count":21,"openxr_joint_count":26,"joint_source":"model landmarks; five OpenXR metacarpals are anatomical estimates","coordinate_space":"raw OpenVR driver world, before recenter","hands":hands,"read_only":true})
     }
 }
 pub fn observe(a: Arc<Telemetry>) {
@@ -137,4 +143,36 @@ pub fn observe(a: Arc<Telemetry>) {
         drop(h);
         pause(500);
     }
+}
+
+// Cache service health separately from the packet stream. Never start/stop it.
+pub fn service_status() -> Value {
+    let mut cmd = Command::new("/usr/bin/systemctl");
+    cmd.args([
+        "show",
+        "xr-hand-tracking.service",
+        "--property=LoadState,ActiveState,SubState,Result,ExecMainStatus,MainPID",
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null());
+    let Ok(mut child) = cmd.spawn() else {
+        return json!({"state":"unknown"});
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    while child.try_wait().ok().flatten().is_none() {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return json!({"state":"unknown"});
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let Ok(output) = child.wait_with_output() else {
+        return json!({"state":"unknown"});
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let fields: std::collections::HashMap<_, _> =
+        text.lines().filter_map(|l| l.split_once('=')).collect();
+    json!({"state":fields.get("ActiveState"),"substate":fields.get("SubState"),"load_state":fields.get("LoadState"),"result":fields.get("Result"),"exit_status":fields.get("ExecMainStatus"),"pid":fields.get("MainPID"),"observed_ns":now()})
 }

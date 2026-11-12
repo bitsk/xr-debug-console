@@ -103,6 +103,7 @@ impl Telemetry {
                     }
                     if n - last >= 2_000_000_000 {
                         let system = load.system(a.live);
+                        if a.live{let health=super::hands::service_status();a.hands.lock().unwrap().service=health;}
                         a.data.lock().unwrap().system = system;
                         last = n;
                     }

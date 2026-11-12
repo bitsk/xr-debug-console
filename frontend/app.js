@@ -171,14 +171,14 @@ function handTrackingView(now=performance.now()) {
 }
 function renderHands(now=performance.now()) {
   const v=handTrackingView(now),t=v.stream;
-  const names={offline:'离线模式',observer_unavailable:'观察器未安装',disconnected:'手追未连接',waiting:'等待手追',replay:'历史数据',stale:'数据过期'};
+  const names={service_failed:'手追服务异常',offline:'离线模式',observer_unavailable:'观察器未安装',disconnected:'手追未连接',waiting:'等待手追',replay:'历史数据',stale:'数据过期'};
   $('hands-stream-state').textContent=v.fresh?'状态流在线':names[t?.status]||(t?.connected?'数据过期':'等待手追');
   $('hands-stream-state').className='pill '+(v.fresh?'live':'subtle');
   $('hands-latency').textContent=v.fresh?num(t.exposure_to_publication_ms,1)+' ms':'—';
   $('hands-age').textContent=v.fresh?num(t.age_ms+Math.max(0,now-received)+deliveryAgeBound,1)+' ms':'—';
   $('hands-rate').textContent=v.fresh?num(t.packet_hz,1)+' Hz':'—';
   $('hands-sequence').textContent=t?.sequence??'—';
-  $('hands-source-note').textContent=v.fresh?'实时手追 · 与头部定位共享采集 · 延迟为软件曝光到状态发布，不含显示扫描。':'等待有效实时手追数据；页面不启动相机或手追。';
+  $('hands-source-note').textContent=t?.status==='service_failed'?'手追服务异常退出（'+(t.service?.result||'未知原因')+'）；姿态和手势已清空，详情见服务日志。':v.fresh?'实时手追 · 与头部定位共享采集 · 延迟为软件曝光到状态发布，不含显示扫描。':'等待有效实时手追数据；页面不启动相机或手追。';
   for(const side of ['left','right']) {
     const h=v.hands.find(h=>h.hand===side),valid=Boolean(h?.valid);
     const badge=$('hand-'+side+'-state');badge.textContent=valid?'追踪有效':v.fresh?'无有效手姿':'不可用';badge.className='badge '+(valid?'live':'');
