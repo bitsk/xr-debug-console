@@ -92,11 +92,37 @@ def sensors():
     return paths
 
 
+TRACE_EVENTS = [
+    'sched/sched_switch', 'sched/sched_wakeup', 'sched/sched_wakeup_new',
+    'sched/sched_migrate_task', 'power/cpu_frequency',
+    'irq/irq_handler_entry', 'irq/irq_handler_exit',
+    'irq/softirq_entry', 'irq/softirq_exit',
+    'drm/drm_vblank_event', 'drm/drm_vblank_event_queued',
+    'drm/drm_vblank_event_delivered',
+    'drm_msm_atomic/msm_atomic_commit_tail_start',
+    'drm_msm_atomic/msm_atomic_commit_tail_finish',
+    'dma_fence/dma_fence_wait_start', 'dma_fence/dma_fence_wait_end',
+    # The MSM tracepoint system is drm_msm_gpu; retired carries GPU busy time.
+    'drm_msm_gpu/msm_gpu_submit', 'drm_msm_gpu/msm_gpu_submit_flush',
+    'drm_msm_gpu/msm_gpu_submit_retired',
+    'drm_msm_gpu/msm_gpu_preemption_trigger', 'drm_msm_gpu/msm_gpu_preemption_irq',
+    'drm_msm_gpu/msm_gpu_freq_change',
+    'thermal/thermal_temperature', 'thermal/cdev_update',
+]
+# One record per idle entry/exit on every CPU: opt-in so it cannot evict the
+# scheduling and GPU records from a bounded ring.
+IDLE_EVENTS = ['power/cpu_idle']
+
+
 class Trace:
-    def __init__(self, output):
+    def __init__(self, output, buffer_kb=4096, idle=False, extra=()):
         self.path = None
         self.output = output
-        self.info = dict(requested=True, enabled=[], unavailable=[], errors=[])
+        self.buffer_kb = buffer_kb
+        self.events = TRACE_EVENTS + (IDLE_EVENTS if idle else []) + [
+            e for e in extra if e not in TRACE_EVENTS]
+        self.info = dict(requested=True, buffer_kb_per_cpu=buffer_kb, enabled=[],
+                         unavailable=[], errors=[])
 
     def start(self):
         roots = [Path('/sys/kernel/tracing'), Path('/sys/kernel/debug/tracing')]
@@ -110,16 +136,8 @@ class Trace:
             self.path = path
             (path / 'tracing_on').write_text('0')
             (path / 'trace_clock').write_text('mono')
-            (path / 'buffer_size_kb').write_text('4096')
-            events = ['sched/sched_switch', 'sched/sched_wakeup', 'sched/sched_wakeup_new',
-                      'sched/sched_migrate_task', 'power/cpu_frequency', 'power/cpu_idle',
-                      'irq/irq_handler_entry', 'irq/irq_handler_exit',
-                      'irq/softirq_entry', 'irq/softirq_exit',
-                      'drm/drm_vblank_event', 'drm/drm_vblank_event_queued',
-                      'drm/drm_vblank_event_delivered', 'dma_fence/dma_fence_wait_start',
-                      'dma_fence/dma_fence_wait_end', 'msm/msm_gpu_submit',
-                      'msm/msm_gpu_submit_flush', 'msm/msm_gpu_submit_retired']
-            for event in events:
+            (path / 'buffer_size_kb').write_text(str(self.buffer_kb))
+            for event in self.events:
                 enable = path / 'events' / event / 'enable'
                 if not enable.exists():
                     self.info['unavailable'].append(event)
@@ -162,11 +180,19 @@ def main():
                         help='read existing producer JSON (up to 8); never open a camera')
     parser.add_argument('--drm-fdinfo', action='store_true', help='optional DRM client GPU/memory counters for selected PIDs')
     parser.add_argument('--trace', action='store_true', help='private tracefs instance, usually requires root')
+    parser.add_argument('--trace-buffer-kb', type=int, default=4096,
+                        help='per-CPU ring size; raise it when capture.json reports overrun')
+    parser.add_argument('--trace-idle', action='store_true', help='also record cpu_idle (very high rate)')
+    parser.add_argument('--trace-event', action='append', default=[], metavar='SYSTEM/EVENT',
+                        help='additional tracefs event; repeatable')
     parser.add_argument('--perf', action='store_true', help='optional 99Hz DWARF CPU stacks for selected PIDs')
     parser.add_argument('--shell-dir', type=Path, help='existing shell summary directory; request JSON only after capture')
     args = parser.parse_args()
     if not 0 < args.seconds <= 120 or not 20 <= args.interval_ms <= 2000 or any(p <= 0 for p in args.pid):
         parser.error('duration must be 0..120s, interval 20..2000ms, PIDs positive')
+    if not 1024 <= args.trace_buffer_kb <= 131072 or any(
+            e.count('/') != 1 or '..' in e or e.startswith('/') for e in args.trace_event):
+        parser.error('trace buffer must be 1024..131072 KiB per CPU; events are SYSTEM/EVENT')
     if args.perf and not args.pid:
         parser.error('--perf requires explicit --pid')
     sources = []
@@ -189,7 +215,8 @@ def main():
                 scope='system counters and optional scheduling/CPU stacks; not sensor exposure or photon timing',
                 errors=[], processes={str(pid): dict(exe=os.path.realpath(f'/proc/{pid}/exe'),
                     cgroup=read(f'/proc/{pid}/cgroup')) for pid in args.pid})
-    trace = Trace(args.output) if args.trace else None
+    trace = Trace(args.output, args.trace_buffer_kb, args.trace_idle,
+                  args.trace_event) if args.trace else None
     perf = None
     perf_log = None
     count = 0
