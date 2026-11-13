@@ -1,3 +1,9 @@
+xr-debug-console (0.1.5) unstable; urgency=medium
+
+  * Add frame inspector, Perfetto export and bounded on-device system profiling.
+
+ -- bits <bigbits@hackx.cc>  Fri, 13 Nov 2026 10:28:40 +0800
+
 xr-debug-console (0.1.4) unstable; urgency=medium
 
   * Package pinned app-scoped WebRTC plugins without unrelated codec dependencies.

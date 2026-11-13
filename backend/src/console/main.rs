@@ -492,6 +492,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "dashboard.js",
             "cameras.js",
             "phase-video.js",
+            "performance.html",
+            "performance.js",
+            "performance.css",
         ]
     } {
         assets.insert(name.into(), fs::read(asset_root.join(name))?);

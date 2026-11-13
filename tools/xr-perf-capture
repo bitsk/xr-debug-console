@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Bounded on-device XR system capture; never starts or stops XR/cameras."""
+import argparse
+import glob
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import time
+
+
+def read(path):
+    try:
+        return Path(path).read_text().strip()
+    except (OSError, UnicodeError):
+        return None
+
+
+def write_json(path, value):
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
+
+
+def clocks():
+    before = time.monotonic_ns()
+    boot = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+    return dict(mono_before_ns=before, boottime_ns=boot,
+                mono_after_ns=time.monotonic_ns())
+
+
+def threads(pids):
+    result = []
+    for pid in pids:
+        for task in Path(f'/proc/{pid}/task').glob('*'):
+            stat = read(task / 'stat')
+            if not stat or ')' not in stat:
+                continue
+            fields = stat[stat.rfind(')') + 2:].split()
+            if len(fields) < 39:
+                continue
+            result.append(dict(pid=pid, tid=int(task.name), comm=stat[stat.find('(')+1:stat.rfind(')')],
+                state=fields[0], start_ticks=int(fields[19]), utime_ticks=int(fields[11]),
+                stime_ticks=int(fields[12]), minor_faults=int(fields[7]), major_faults=int(fields[9]),
+                priority=int(fields[15]), nice=int(fields[16]), cpu=int(fields[36]),
+                policy=int(fields[38]), schedstat=read(task / 'schedstat'),
+                wchan=read(task / 'wchan'), status=read(task / 'status')))
+    return result
+
+
+def sensors():
+    patterns = [
+        '/sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq',
+        '/sys/devices/system/cpu/cpufreq/policy*/scaling_governor',
+        '/sys/class/devfreq/*/cur_freq', '/sys/class/devfreq/*/governor',
+        '/sys/class/thermal/thermal_zone*/temp', '/sys/class/thermal/thermal_zone*/type',
+        '/sys/class/thermal/cooling_device*/cur_state',
+        '/sys/class/thermal/cooling_device*/type',
+        '/sys/class/power_supply/*/current_now', '/sys/class/power_supply/*/voltage_now',
+    ]
+    paths = sorted({p for pattern in patterns for p in glob.glob(pattern)})
+    return paths
+
+
+class Trace:
+    def __init__(self, output):
+        self.path = None
+        self.output = output
+        self.info = dict(requested=True, enabled=[], unavailable=[], errors=[])
+
+    def start(self):
+        roots = [Path('/sys/kernel/tracing'), Path('/sys/kernel/debug/tracing')]
+        root = next((p for p in roots if (p / 'instances').is_dir()), None)
+        if root is None:
+            self.info['errors'].append('tracefs instances unavailable; global tracing untouched')
+            return
+        try:
+            path = root / 'instances' / f'xr-perf-{os.getpid()}-{time.monotonic_ns()}'
+            path.mkdir()  # Exclusive ownership; never re-use someone else's instance.
+            self.path = path
+            (path / 'tracing_on').write_text('0')
+            (path / 'trace_clock').write_text('mono')
+            (path / 'buffer_size_kb').write_text('4096')
+            events = ['sched/sched_switch', 'sched/sched_wakeup', 'sched/sched_wakeup_new',
+                      'sched/sched_migrate_task', 'power/cpu_frequency', 'power/cpu_idle',
+                      'irq/irq_handler_entry', 'irq/irq_handler_exit',
+                      'irq/softirq_entry', 'irq/softirq_exit',
+                      'drm/drm_vblank_event', 'drm/drm_vblank_event_queued',
+                      'drm/drm_vblank_event_delivered', 'dma_fence/dma_fence_wait_start',
+                      'dma_fence/dma_fence_wait_end', 'msm/msm_gpu_submit',
+                      'msm/msm_gpu_submit_flush', 'msm/msm_gpu_submit_retired']
+            for event in events:
+                enable = path / 'events' / event / 'enable'
+                if not enable.exists():
+                    self.info['unavailable'].append(event)
+                    continue
+                enable.write_text('1')
+                self.info['enabled'].append(event)
+            self.info['clock'] = read(path / 'trace_clock')
+            self.info['start'] = clocks()
+            (path / 'tracing_on').write_text('1')
+        except OSError as error:
+            self.info['errors'].append(str(error))
+
+    def stop(self):
+        if self.path is None:
+            return
+        try:
+            (self.path / 'tracing_on').write_text('0')
+            self.info['stop'] = clocks()
+            self.info['buffers'] = {p.parent.name: read(p) for p in self.path.glob('per_cpu/cpu*/stats')}
+            # Bounded by the per-CPU ring; retain overwrite counters and headers.
+            with (self.path / 'trace').open('rb') as source, (self.output / 'system.ftrace').open('wb') as dest:
+                shutil.copyfileobj(source, dest)
+        except OSError as error:
+            self.info['errors'].append(str(error))
+        finally:
+            try:
+                (self.path / 'events/enable').write_text('0')
+                self.path.rmdir()
+            except OSError as error:
+                self.info['errors'].append('instance cleanup: ' + str(error))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path, required=True, help='new private evidence directory')
+    parser.add_argument('--pid', action='append', type=int, default=[], help='explicit process; repeat for shell, runtime, tracking and UI')
+    parser.add_argument('--seconds', type=float, default=15)
+    parser.add_argument('--interval-ms', type=int, default=100)
+    parser.add_argument('--trace', action='store_true', help='private tracefs instance, usually requires root')
+    parser.add_argument('--perf', action='store_true', help='optional 99Hz DWARF CPU stacks for selected PIDs')
+    parser.add_argument('--shell-dir', type=Path, help='existing shell summary directory; request JSON only after capture')
+    args = parser.parse_args()
+    if not 0 < args.seconds <= 120 or not 20 <= args.interval_ms <= 2000 or any(p <= 0 for p in args.pid):
+        parser.error('duration must be 0..120s, interval 20..2000ms, PIDs positive')
+    if args.perf and not args.pid:
+        parser.error('--perf requires explicit --pid')
+    args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
+    stop = False
+    def interrupted(signum, frame):
+        nonlocal stop
+        stop = True
+    signal.signal(signal.SIGINT, interrupted)
+    signal.signal(signal.SIGTERM, interrupted)
+    meta = dict(schema=1, clock='CLOCK_MONOTONIC', start=clocks(),
+                kernel=os.uname().release, boot_id=read('/proc/sys/kernel/random/boot_id'),
+                pids=args.pid, ticks_per_second=os.sysconf('SC_CLK_TCK'),
+                interval_ms=args.interval_ms, requested_seconds=args.seconds,
+                scope='system counters and optional scheduling/CPU stacks; not sensor exposure or photon timing',
+                errors=[], processes={str(pid): dict(exe=os.path.realpath(f'/proc/{pid}/exe'),
+                    cgroup=read(f'/proc/{pid}/cgroup')) for pid in args.pid})
+    trace = Trace(args.output) if args.trace else None
+    perf = None
+    perf_log = None
+    count = 0
+    try:
+        if trace:
+            trace.start()
+        if args.perf:
+            perf_log = (args.output / 'perf.log').open('wb')
+            try:
+                perf = subprocess.Popen(['perf', 'record', '-e', 'cpu-clock', '-F', '99',
+                    '--call-graph', 'dwarf,8192', '-p', ','.join(map(str, args.pid)),
+                    '-o', str(args.output / 'perf.data'), '--', 'sleep', str(args.seconds)],
+                    stdout=perf_log, stderr=subprocess.STDOUT, start_new_session=True)
+            except OSError as error:
+                meta['errors'].append('perf: ' + str(error))
+        paths = sensors()
+        started = time.monotonic()
+        next_sample = started
+        with (args.output / 'system.jsonl').open('w') as stream:
+            while not stop and time.monotonic() - started < args.seconds:
+                before = time.monotonic_ns()
+                sample = dict(mono_ns=before, threads=threads(args.pid),
+                    sensors={p: read(p) for p in paths},
+                    proc={p: read('/proc/' + p) for p in ['stat', 'meminfo', 'vmstat',
+                        'pressure/cpu', 'pressure/memory', 'pressure/io', 'interrupts', 'softirqs']},
+                    process_io={str(pid): read(f'/proc/{pid}/io') for pid in args.pid})
+                sample['read_complete_ns'] = time.monotonic_ns()
+                stream.write(json.dumps(sample, separators=(',', ':')) + '\n')
+                count += 1
+                next_sample += args.interval_ms / 1000
+                # No catch-up burst when sampling itself exceeds the interval.
+                next_sample = max(next_sample, time.monotonic())
+                time.sleep(max(0, next_sample - time.monotonic()))
+    finally:
+        if trace:
+            trace.stop()
+            meta['trace'] = trace.info
+        if perf:
+            if perf.poll() is None:
+                os.killpg(perf.pid, signal.SIGINT)
+            try:
+                meta['perf_exit'] = perf.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(perf.pid, signal.SIGKILL)
+                meta['perf_exit'] = perf.wait()
+                meta['errors'].append('perf did not flush within 5s')
+        if perf_log:
+            perf_log.close()
+        meta.update(end=clocks(), samples=count, interrupted=stop)
+        # A snapshot incurs clone/serialization cost after the measured interval.
+        # No capture-request, screen readback, service control or camera open.
+        if args.shell_dir and not stop:
+            try:
+                target = args.shell_dir / 'timeline.json'
+                previous = target.stat().st_mtime_ns if target.exists() else None
+                request = args.shell_dir / 'timeline-request'
+                with request.open('x'):
+                    pass
+                for _ in range(50):
+                    time.sleep(.1)
+                    if target.exists() and target.stat().st_mtime_ns != previous:
+                        shutil.copy2(target, args.output / 'timeline.json')
+                        meta['shell_snapshot'] = 'received after system sampling'
+                        break
+                else:
+                    meta['errors'].append('shell snapshot timed out; runtime may be idle or lack request support')
+                request.unlink(missing_ok=True)
+            except OSError as error:
+                meta['errors'].append('shell snapshot: ' + str(error))
+        write_json(args.output / 'capture.json', meta)
+    print(json.dumps(dict(output=str(args.output), samples=count, errors=meta['errors'])))
+
+
+if __name__ == '__main__':
+    main()

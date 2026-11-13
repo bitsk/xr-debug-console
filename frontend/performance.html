@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MIX · 逐帧性能分析</title><link rel="stylesheet" href="performance.css">
+<header><div><small>OPENKYLIN MIX · FRAME INSPECTOR</small><h1>逐帧性能与画面稳定性</h1><p>从一帧的关键路径，看到输入、绘制与等待。</p></div><a href="index.html">返回调试台</a></header>
+<main>
+<section class="controls"><label>导入 timeline / summary JSON<input id="file" type="file" accept=".json,application/json"></label><label>系统采样 JSONL（可选）<input id="system" type="file" accept=".jsonl"></label><label>系统 capture.json（校验时钟）<input id="metadata" type="file" accept=".json"></label><label>参考刷新率 <input id="hz" type="number" min="1" max="240" value="72"> Hz</label><label><input id="captures" type="checkbox">计入截图帧</label><button id="export" disabled>导出 Perfetto trace</button></section>
+<p id="status" role="status">等待真实记录。导入文件仅在本页处理。</p>
+<div id="kpis" class="kpis"></div>
+<section><h2>逐帧耗时 <small>点击定位；蓝线是相邻帧起点间隔</small></h2><canvas id="overview" height="220" aria-label="逐帧 CPU 墙钟耗时及帧间隔"></canvas><p class="note">墙钟时间包含等待和被抢占；间隔超预算不是已证实的掉帧。截图帧默认不参与统计，缺失帧不插值。</p></section>
+<section><div class="row"><h2 id="frame-title">帧详情</h2><button id="previous">上一帧</button><input id="frame" type="range" min="0" max="0" value="0" aria-label="选择帧"><button id="next">下一帧</button><button id="worst">最慢帧</button></div><div id="selection"></div><div id="lanes"></div><div id="gpu"></div></section>
+<div class="columns"><section><h2>阶段分布 <small>ms · P50 / P95 / P99 / 最大</small></h2><table><thead><tr><th>阶段</th><th>P50</th><th>P95</th><th>P99</th><th>最大</th></tr></thead><tbody id="stages"></tbody></table></section><section><h2>稳定性与系统关联</h2><div id="health"></div><div id="system-detail"></div><p class="note">模型录制是 CPU 成本。GPU 查询仅给出设备时钟上的阶段间隔，不与 CPU 条带强行对齐。没有调用栈时不生成函数火焰图。</p></section></div>
+<section><h2>观测范围</h2><p id="coverage"></p><p class="note">头姿/手柄位姿是应用消费的预测结果；原始曝光、IMU、DSP 推理内部、合成器与物理扫描仍需相应生产者/系统事件。各阶段 P95 不可相加。不同运行会话、不同 boot 的记录不可拼接为端到端耗时。</p></section>
+</main><script src="performance.js"></script></html>
