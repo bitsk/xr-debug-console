@@ -47,13 +47,13 @@
     return next && next.number===f.number+1 && (!f.wait_number || next.wait_number===f.wait_number+1) ? ms(f.mono_ns[0],next.mono_ns[0]) : null;
   }
   function refresh() {
-    frames=all.filter(f=>$('captures').checked || !f.capture);
+    frames=all.filter(f=>($('captures').checked || !f.capture) && ($('mask').value==='all' || f.controller_draw_mask===Number($('mask').value)));
     index=Math.min(index,Math.max(0,frames.length-1));$('frame').max=Math.max(0,frames.length-1);
     const duration=frames.map(f=>ms(f.mono_ns[0],f.mono_ns[8]));
     const intervals=frames.map(interval).filter(finite);
     const hz=Number($('hz').value), budget=1000/(hz>0?hz:72);
     $('kpis').replaceChildren();
-    [['有效分析帧',frames.length,`截图排除 ${all.length-frames.length} 帧`],['帧墙钟 P95',`${fmt(quantile(duration,.95))} ms`,'包含等待与被抢占'],['间隔 P99',`${fmt(quantile(intervals,.99))} ms`,'仅相邻连续帧；非物理扫描'],['间隔超参考预算',`${intervals.filter(v=>v>budget).length} / ${intervals.length}`,`参考 ${fmt(budget)} ms`]].forEach(([label,value,note])=>{const e=element('div',undefined,'kpi');e.append(element('span',label),element('b',value),element('small',note));$('kpis').append(e);});
+    [['有效分析帧',frames.length,`筛选排除 ${all.length-frames.length} 帧`],['帧墙钟 P95',`${fmt(quantile(duration,.95))} ms`,'包含等待与被抢占'],['间隔 P99',`${fmt(quantile(intervals,.99))} ms`,'仅相邻连续帧；非物理扫描'],['间隔超参考预算',`${intervals.filter(v=>v>budget).length} / ${intervals.length}`,`参考 ${fmt(budget)} ms`]].forEach(([label,value,note])=>{const e=element('div',undefined,'kpi');e.append(element('span',label),element('b',value),element('small',note));$('kpis').append(e);});
     const stageValues=new Map();
     frames.forEach(f=>groups(f).forEach(([track,names,times])=>names.forEach((name,i)=>{const key=track+' / '+name;if(!stageValues.has(key))stageValues.set(key,[]);stageValues.get(key).push(ms(times[i],times[i+1]));})));
     $('stages').replaceChildren();stageValues.forEach((v,name)=>{const row=element('tr');row.append(element('td',name));[.5,.95,.99,1].forEach(p=>row.append(element('td',fmt(quantile(v,p)))));$('stages').append(row);});
@@ -78,12 +78,18 @@
   }
   function select(i) {
     index=Math.max(0,Math.min(i,frames.length-1));$('frame').value=index;plot();
-    const f=frames[index];$('lanes').replaceChildren();$('gpu').replaceChildren();$('selection').replaceChildren();if(!f)return;
+    const f=frames[index];$('lanes').replaceChildren();$('gpu').replaceChildren();$('selection').replaceChildren();if(!f){$('frame-title').textContent='无匹配帧';$('system-detail').replaceChildren();return;}
     $('frame-title').textContent=`帧 #${f.number} · ${fmt(ms(f.mono_ns[0],f.mono_ns[8]))} ms`;
-    const tags=[`头姿 flags ${f.head_flags}`,`grip 左/右 ${f.controller_grip?.map(Boolean).join(' / ')}`,`位姿标志 grip/aim ${JSON.stringify(f.controller_flags??'未提供')}`,`图集 ${f.atlas_update?.[1]??'—'} bytes`,`图层 ${f.layers}`,`截图 ${!!f.capture}`];
+    const tags=[`头姿 flags ${f.head_flags}`,`grip 左/右 ${f.controller_grip?.map(Boolean).join(' / ')}`,`位姿标志 grip/aim ${JSON.stringify(f.controller_flags??'未提供')}`,`图集 ${f.atlas_update?.[1]??'—'} bytes`,`图层 ${f.layers}`,`模型配置 mask ${f.controller_draw_mask}`,`空间快速路径 ${f.spatial_fast_path??"未提供"}`,`截图 ${!!f.capture}`];
     if(validTimes(f.thread_cpu_ns,2))tags.push(`线程实际 CPU ${fmt(ms(...f.thread_cpu_ns))} ms`,`核 ${f.cpu_core?.join(' → ')}`);
     if(f.model_vertices)tags.push(`控制器/手模型顶点 ${JSON.stringify(f.model_vertices)}`,`面板实例 ${f.panel_instances}`);
     if(f.runtime_now_xr_ns && validTimes(f.runtime_now_mono_bracket_ns,2))tags.push(`预测显示提前量（配对时刻）${fmt(ms(f.runtime_now_xr_ns,f.predicted_display_xr_ns))} ms`);
+    const previous=all[positions.get(f)-1];
+    if(previous && previous.number+1===f.number && f.predicted_display_xr_ns>previous.predicted_display_xr_ns) {
+      function delta(a,b) {if(!Array.isArray(a)||!Array.isArray(b)||a.length!==7||b.length!==7||!a.every(finite)||!b.every(finite))return '缺少连续有效样本';const d=Math.hypot(...a.slice(0,3).map((v,i)=>v-b[i]))*1000;const an=Math.hypot(...a.slice(3)),bn=Math.hypot(...b.slice(3));if(!an||!bn)return '四元数无效';const dot=Math.abs(a.slice(3).reduce((v,x,i)=>v+x*b[i+3],0)/(an*bn));return `${d.toFixed(2)} mm / ${(2*Math.acos(Math.min(1,dot))*180/Math.PI).toFixed(2)}°`;}
+      if((f.head_flags&15)===15 && (previous.head_flags&15)===15)tags.push('相邻头姿变化 '+delta(f.head_pose,previous.head_pose));
+      for(let h=0;h<2;h++)tags.push(`${h?'右':'左'}手柄相邻位姿变化 `+delta(f.controller_grip?.[h],previous.controller_grip?.[h]));
+    }
     $('selection').append(...tags.map(t=>element('span',t,'pill')));
     const byTrack=new Map();slices(f).forEach(s=>{if(!byTrack.has(s.track))byTrack.set(s.track,[]);byTrack.get(s.track).push(s);});
     const left=validTimes(f.loop_mono_ns,3)?f.loop_mono_ns[0]:f.mono_ns[0];
@@ -152,7 +158,7 @@
   $('frame').oninput=e=>select(Number(e.target.value));$('previous').onclick=()=>select(index-1);$('next').onclick=()=>select(index+1);
   $('worst').onclick=()=>{if(frames.length)select(frames.reduce((best,f,i)=>ms(f.mono_ns[0],f.mono_ns[8])>ms(frames[best].mono_ns[0],frames[best].mono_ns[8])?i:best,0));};
   $('overview').onclick=e=>select(Math.floor((e.offsetX-45)/($('overview').clientWidth-60)*frames.length));
-  $('captures').onchange=refresh;$('hz').onchange=refresh;window.addEventListener('resize',plot);
+  $('captures').onchange=refresh;$('mask').onchange=refresh;$('hz').onchange=refresh;window.addEventListener('resize',plot);
   $('export').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(trace())],{type:'application/json'}));const a=element('a');a.href=url;a.download='xr-frame-trace.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
   window.xrPerf={load,trace,loadKernel};
   if(window.XR_FRAME_RECORDING)load(window.XR_FRAME_RECORDING,'历史实机样本 · 隔离记录');

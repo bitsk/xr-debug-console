@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
 import time
 
@@ -46,6 +47,34 @@ def threads(pids):
                 priority=int(fields[15]), nice=int(fields[16]), cpu=int(fields[36]),
                 policy=int(fields[38]), schedstat=read(task / 'schedstat'),
                 wchan=read(task / 'wchan'), status=read(task / 'status')))
+    return result
+
+
+def producer_files(sources):
+    result = {}
+    for label, path in sources:
+        before = time.monotonic_ns()
+        try:
+            if not stat.S_ISREG(Path(path).lstat().st_mode):
+                raise ValueError('producer source must be a regular JSON file')
+            with Path(path).open() as stream:
+                raw = stream.read(1048577)
+            if len(raw) > 1048576:
+                raise ValueError('producer snapshot exceeds 1 MiB')
+            value = json.loads(raw)
+            result[label] = dict(read_before_ns=before, read_after_ns=time.monotonic_ns(), value=value)
+        except (OSError, ValueError) as error:
+            result[label] = dict(read_before_ns=before, read_after_ns=time.monotonic_ns(), error=str(error))
+    return result
+
+
+def drm_fdinfo(pids):
+    result = {}
+    for pid in pids:
+        for path in list(Path(f'/proc/{pid}/fdinfo').glob('*'))[:512]:
+            raw = read(path)
+            if raw and 'drm-driver:' in raw:
+                result[f'{pid}/{path.name}'] = raw
     return result
 
 
@@ -129,6 +158,9 @@ def main():
     parser.add_argument('--pid', action='append', type=int, default=[], help='explicit process; repeat for shell, runtime, tracking and UI')
     parser.add_argument('--seconds', type=float, default=15)
     parser.add_argument('--interval-ms', type=int, default=100)
+    parser.add_argument('--json-source', action='append', default=[], metavar='NAME=PATH',
+                        help='read existing producer JSON (up to 8); never open a camera')
+    parser.add_argument('--drm-fdinfo', action='store_true', help='optional DRM client GPU/memory counters for selected PIDs')
     parser.add_argument('--trace', action='store_true', help='private tracefs instance, usually requires root')
     parser.add_argument('--perf', action='store_true', help='optional 99Hz DWARF CPU stacks for selected PIDs')
     parser.add_argument('--shell-dir', type=Path, help='existing shell summary directory; request JSON only after capture')
@@ -137,6 +169,12 @@ def main():
         parser.error('duration must be 0..120s, interval 20..2000ms, PIDs positive')
     if args.perf and not args.pid:
         parser.error('--perf requires explicit --pid')
+    sources = []
+    for source in args.json_source:
+        label, separator, path = source.partition('=')
+        if not separator or not label or not path or len(sources) >= 8 or label in [s[0] for s in sources]:
+            parser.error('--json-source requires unique NAME=PATH pairs, at most 8')
+        sources.append((label, path))
     args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
     stop = False
     def interrupted(signum, frame):
@@ -146,7 +184,7 @@ def main():
     signal.signal(signal.SIGTERM, interrupted)
     meta = dict(schema=1, clock='CLOCK_MONOTONIC', start=clocks(),
                 kernel=os.uname().release, boot_id=read('/proc/sys/kernel/random/boot_id'),
-                pids=args.pid, ticks_per_second=os.sysconf('SC_CLK_TCK'),
+                pids=args.pid, producer_sources=dict(sources), drm_fdinfo_requested=args.drm_fdinfo, ticks_per_second=os.sysconf('SC_CLK_TCK'),
                 interval_ms=args.interval_ms, requested_seconds=args.seconds,
                 scope='system counters and optional scheduling/CPU stacks; not sensor exposure or photon timing',
                 errors=[], processes={str(pid): dict(exe=os.path.realpath(f'/proc/{pid}/exe'),
@@ -177,7 +215,9 @@ def main():
                     sensors={p: read(p) for p in paths},
                     proc={p: read('/proc/' + p) for p in ['stat', 'meminfo', 'vmstat',
                         'pressure/cpu', 'pressure/memory', 'pressure/io', 'interrupts', 'softirqs']},
-                    process_io={str(pid): read(f'/proc/{pid}/io') for pid in args.pid})
+                    process_io={str(pid): read(f'/proc/{pid}/io') for pid in args.pid},
+                    producers=producer_files(sources),
+                    drm_fdinfo=drm_fdinfo(args.pid) if args.drm_fdinfo else None)
                 sample['read_complete_ns'] = time.monotonic_ns()
                 stream.write(json.dumps(sample, separators=(',', ':')) + '\n')
                 count += 1
