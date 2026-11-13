@@ -59,7 +59,8 @@
     $('stages').replaceChildren();stageValues.forEach((v,name)=>{const row=element('tr');row.append(element('td',name));[.5,.95,.99,1].forEach(p=>row.append(element('td',fmt(quantile(v,p)))));$('stages').append(row);});
     const head=frames.filter(f=>(f.head_flags&15)===15).length;
     const left=frames.filter(f=>f.controller_grip?.[0]).length,right=frames.filter(f=>f.controller_grip?.[1]).length;
-    const messages=[`头部 valid + tracked：${head}/${frames.length}；原始 flags 随帧保留。`,`左右手柄可用 grip：${left} / ${right} 帧；有位姿不等于 tracked，按帧查看原始 flags。`,`图集上传：${frames.filter(f=>f.atlas_update?.[1]>0).length} 帧；全量替换：${frames.filter(f=>f.atlas_update?.[2]).length} 帧。`,`未渲染记录：${summary().skipped ? summary().skipped.length : '未提供'} 条；旧记录未提供时不推断为零。`];
+    const atlasFrames=frames.filter(f=>Array.isArray(f.atlas_update));
+    const messages=[`头部 valid + tracked：${head}/${frames.length}；原始 flags 随帧保留。`,`左右手柄可用 grip：${left} / ${right} 帧；有位姿不等于 tracked，按帧查看原始 flags。`,atlasFrames.length?`图集已采样 ${atlasFrames.length}/${frames.length} 帧；上传 ${atlasFrames.filter(f=>f.atlas_update[1]>0).length} 帧，全量替换 ${atlasFrames.filter(f=>f.atlas_update[2]).length} 帧。`:"图集上传计数未提供。",`未渲染记录：${summary().skipped ? summary().skipped.length : '未提供'} 条；旧记录未提供时不推断为零。`];
     if(!left || !right)messages.push('双手柄移动/模型性能验收缺少有效样本，不能由此证明没有手柄瓶颈。');
     $('health').replaceChildren(...messages.map(v=>element('p',v)));
     $('coverage').textContent=`CPU 主阶段已提供；绘制细分 ${frames.filter(f=>validTimes(f.render_mono_ns,11)).length} 帧；GPU 查询 ${frames.filter(f=>f.gpu?.intervals_ns).length} 帧；线程 CPU 时间 ${frames.filter(f=>validTimes(f.thread_cpu_ns,2)).length} 帧。系统采样 ${system.length} 条。`;
@@ -124,7 +125,7 @@
     events.push({ph:'M',name:'process_name',pid,tid:0,args:{name:'xr-shell imported observations'}});
     frames.forEach(f=>{
       slices(f).forEach(s=>events.push({ph:'X',cat:'xr.cpu_wall',name:s.name,pid,tid:tid(s.track),ts:s.start/1000,dur:(s.end-s.start)/1000,args:{frame:f.number,capture:!!f.capture}}));
-      events.push({ph:'C',cat:'xr.state',name:'frame state',pid,tid:tid('状态'),ts:f.mono_ns[0]/1000,args:{frame:f.number,head_flags:f.head_flags,left_grip:f.controller_grip?.[0]?1:0,right_grip:f.controller_grip?.[1]?1:0,atlas_bytes:f.atlas_update?.[1]||0}});
+      events.push({ph:'C',cat:'xr.state',name:'frame state',pid,tid:tid('状态'),ts:f.mono_ns[0]/1000,args:{frame:f.number,head_flags:f.head_flags,left_grip:f.controller_grip?.[0]?1:0,right_grip:f.controller_grip?.[1]?1:0,...(f.atlas_update ? {atlas_bytes:f.atlas_update[1]} : {})}});
       if(f.gpu?.intervals_ns)events.push({ph:'C',cat:'xr.gpu_duration',name:'GPU durations (ms), sampled after fence',pid,tid:tid('GPU 耗时计数'),ts:f.mono_ns[8]/1000,args:Object.fromEntries(gpuNames.map((n,i)=>[n,f.gpu.intervals_ns[i]/1e6]))});
     });
     (summary().skipped||[]).forEach(s=>{if(validTimes(s.mono_ns,3))events.push({ph:'X',cat:'xr.skipped',name:s.reason,pid,tid:tid('未渲染'),ts:s.mono_ns[0]/1000,dur:(s.mono_ns[2]-s.mono_ns[0])/1000,args:{wait_number:s.wait_number}});});
