@@ -51,15 +51,18 @@ int main(int argc,char **argv){
    if(count>128)count=128;
    if(count&&last_frame_seconds>batch[count-1].m_flSystemTimeInSeconds){last_frame_seconds=-1;last_index=0;++epoch;}
    vr::Compositor_CumulativeStats stats{};compositor->GetCumulativeStats(&stats,sizeof(stats));
-   // Keep the newest entry pending: a subsequent frame may complete its GPU timing.
-   // The final pending entry is deliberately not fabricated on observer shutdown.
+   // Presentation/GPU fields can still change several frames after submit.
+   // Leave 250 ms of history pending instead of freezing incomplete counters
+   // one frame later. Pending entries are not fabricated on observer shutdown.
    for(uint32_t i=0;i+1<count;++i){
     const auto &f=batch[i];
     if(f.m_flSystemTimeInSeconds<=last_frame_seconds)continue;
+    const double history_age=batch[count-1].m_flSystemTimeInSeconds-f.m_flSystemTimeInSeconds;
+    if(history_age<0.250)continue;
     uint32_t advance=f.m_nFrameIndex-last_index;
     uint32_t missing=last_frame_seconds>=0&&advance>0&&advance<0x80000000u?advance-1:0;
-    std::printf("MIX_FRAME_TIMING {\"schema\":1,\"epoch\":%u,\"poll_mono_before_seconds\":%.9f,\"poll_mono_after_seconds\":%.9f,\"runtime_frame_seconds\":%.9f,\"clock_mapping_verified\":false,\"frame_index\":%u,\"missing_indices_before\":%u,\"stats_pid\":%u,\"presents\":%u,\"mispresents\":%u,\"dropped\":%u,\"reprojection_flags\":%u,\"pre_submit_gpu_ms\":%.6f,\"post_submit_gpu_ms\":%.6f,\"total_render_gpu_ms\":%.6f,\"compositor_gpu_ms\":%.6f,\"compositor_cpu_ms\":%.6f,\"compositor_idle_ms\":%.6f,\"client_interval_ms\":%.6f,\"present_call_ms\":%.6f,\"wait_present_ms\":%.6f,\"submit_ms\":%.6f,\"wait_get_poses_ms\":%.6f,\"new_poses_ready_ms\":%.6f,\"new_frame_ready_ms\":%.6f,\"compositor_update_start_ms\":%.6f,\"compositor_update_end_ms\":%.6f,\"compositor_render_start_ms\":%.6f,\"vsyncs_ready\":%u,\"vsyncs_to_first_view\":%u,\"transfer_latency_ms\":%.6f,\"hmd_pose_valid\":%s,\"tracking_result\":%d}\n",
-     epoch,before,after,f.m_flSystemTimeInSeconds,f.m_nFrameIndex,missing,stats.m_nPid,
+    std::printf("MIX_FRAME_TIMING {\"schema\":1,\"epoch\":%u,\"poll_mono_before_seconds\":%.9f,\"poll_mono_after_seconds\":%.9f,\"runtime_frame_seconds\":%.9f,\"clock_mapping_verified\":false,\"history_age_ms\":%.6f,\"frame_index\":%u,\"missing_indices_before\":%u,\"stats_pid\":%u,\"presents\":%u,\"mispresents\":%u,\"dropped\":%u,\"reprojection_flags\":%u,\"pre_submit_gpu_ms\":%.6f,\"post_submit_gpu_ms\":%.6f,\"total_render_gpu_ms\":%.6f,\"compositor_gpu_ms\":%.6f,\"compositor_cpu_ms\":%.6f,\"compositor_idle_ms\":%.6f,\"client_interval_ms\":%.6f,\"present_call_ms\":%.6f,\"wait_present_ms\":%.6f,\"submit_ms\":%.6f,\"wait_get_poses_ms\":%.6f,\"new_poses_ready_ms\":%.6f,\"new_frame_ready_ms\":%.6f,\"compositor_update_start_ms\":%.6f,\"compositor_update_end_ms\":%.6f,\"compositor_render_start_ms\":%.6f,\"vsyncs_ready\":%u,\"vsyncs_to_first_view\":%u,\"transfer_latency_ms\":%.6f,\"hmd_pose_valid\":%s,\"tracking_result\":%d}\n",
+     epoch,before,after,f.m_flSystemTimeInSeconds,history_age*1000.0,f.m_nFrameIndex,missing,stats.m_nPid,
      f.m_nNumFramePresents,f.m_nNumMisPresented,f.m_nNumDroppedFrames,f.m_nReprojectionFlags,
      f.m_flPreSubmitGpuMs,f.m_flPostSubmitGpuMs,f.m_flTotalRenderGpuMs,f.m_flCompositorRenderGpuMs,
      f.m_flCompositorRenderCpuMs,f.m_flCompositorIdleCpuMs,f.m_flClientFrameIntervalMs,
