@@ -48,3 +48,16 @@
 ## openKylin WebRTC 插件
 
 `xr-debug-gstreamer` 从 `dependencies/gstreamer-webrtc/source.lock.json` 固定的官方 ARM64 包中选择 5 个原样插件：WebRTC、DTLS、SRTP、SCTP 和 H264/H265 parser，保留完整上游版权说明。构建环境通过 `XR_GST_RUNTIME_DEB` 提供校验后的官方包。后端只在本进程注册私有插件目录，不修改全局 GStreamer 搜索路径。原生视频包依赖该组件及发行版的 nice/base/good 插件，不引入公共源依赖不齐的整个 bad 插件集合。
+
+## Frame inspector and system capture
+
+`performance.html` imports Shell timeline/summary JSON, shows per-frame CPU
+stages, pose validity and optional GPU durations, and exports a Perfetto-compatible
+Chrome JSON trace. System JSONL and sched_switch traces are optional; associate
+only recordings with the same boot and monotonic clock.
+
+`xr-perf-capture` collects bounded on-device process/system observations; optional
+`--trace` uses an owned tracefs instance and `--perf` records CPU stacks. It never
+starts XR or opens cameras. The existing OpenVR observer also accepts `--history`
+as its fourth argument for per-frame history instead of the default 500ms snapshot.
+See [the profiling guide](https://github.com/bitsk/openkylin-xr-docs/blob/main/wiki/frame-profiling.md).

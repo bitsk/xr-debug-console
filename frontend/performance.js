@@ -11,7 +11,7 @@
   const ms = (a,b) => (b-a)/1e6;
   const fmt = v => finite(v) ? v.toFixed(3) : '—';
   const validTimes = (v,n) => Array.isArray(v) && v.length === n && v.every((x,i) => finite(x) && x > 0 && (!i || x >= v[i-1]));
-  let recording = null, all = [], frames = [], system = [], metadata = null, index = 0, source = '', positions = new Map();
+  let recording = null, all = [], frames = [], system = [], metadata = null, index = 0, source = '', positions = new Map(), kernel = [], kernelErrors = 0;
   const element = (tag, text, className) => { const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(className)e.className=className;return e; };
   const quantile = (a,p) => { const v=a.filter(finite).sort((a,b)=>a-b);return v.length?v[Math.floor((v.length-1)*p)]:null; };
   function load(data, label='timeline.json') {
@@ -30,6 +30,7 @@
     if(validTimes(f.pre_input_mono_ns,4))list.push(['头姿与手部',preNames,f.pre_input_mono_ns]);
     if(validTimes(f.input_mono_ns,5))list.push(['输入 / UI',inputNames,f.input_mono_ns]);
     if(validTimes(f.render_mono_ns,11))list.push(['绘制细分',renderNames,f.render_mono_ns]);
+    if(validTimes(f.end_frame_mono_ns,3))list.push(['提交后处理',['图层 / EndFrame','状态遥测更新'],f.end_frame_mono_ns]);
     return list;
   }
   function slices(f) {
@@ -37,7 +38,9 @@
     groups(f).forEach(([track,names,times])=>names.forEach((name,i)=>result.push({track,name,start:times[i],end:times[i+1]})));
     [['动作同步',f.action_sync_span],['左手状态读取',f.controller_read_spans?.[0]],['右手状态读取',f.controller_read_spans?.[1]]].forEach(([name,t])=>{if(validTimes(t,2))result.push({track:'动作读取',name,start:t[0],end:t[1]});});
     (f.draw_spans || []).forEach(s=>{if(validTimes(s.mono_ns,2))result.push({track:'模型与面板录制',name:`${s.eye?'右':'左'} ${s.pass} / ${s.stage}`,start:s.mono_ns[0],end:s.mono_ns[1]});});
-    return result.filter(s=>s.start>=f.mono_ns[0] && s.end<=f.mono_ns[8]);
+    if(validTimes(f.loop_mono_ns,3))['帧前事件处理','采样请求检查 / 导出'].forEach((name,i)=>result.push({track:'帧外工作',name,start:f.loop_mono_ns[i],end:f.loop_mono_ns[i+1]}));
+    if(f.post_frame_complete && validTimes(f.post_frame_mono_ns,2))result.push({track:'帧外工作',name:'记录 / 截图文件 / 日志',start:f.post_frame_mono_ns[0],end:f.post_frame_mono_ns[1]});
+    return result;
   }
   function interval(f) {
     const i=positions.get(f), next=all[i+1];
@@ -56,7 +59,7 @@
     $('stages').replaceChildren();stageValues.forEach((v,name)=>{const row=element('tr');row.append(element('td',name));[.5,.95,.99,1].forEach(p=>row.append(element('td',fmt(quantile(v,p)))));$('stages').append(row);});
     const head=frames.filter(f=>(f.head_flags&15)===15).length;
     const left=frames.filter(f=>f.controller_grip?.[0]).length,right=frames.filter(f=>f.controller_grip?.[1]).length;
-    const messages=[`头部 valid + tracked：${head}/${frames.length}；原始 flags 随帧保留。`,`左右手柄可用 grip：${left} / ${right} 帧；有位姿不等于 tracked，按帧查看原始 flags。`,`图集上传：${frames.filter(f=>f.atlas_update?.[1]>0).length} 帧；全量替换：${frames.filter(f=>f.atlas_update?.[2]).length} 帧。`,`未渲染记录：${(summary().skipped || []).length} 条；旧记录未提供时不推断为零。`];
+    const messages=[`头部 valid + tracked：${head}/${frames.length}；原始 flags 随帧保留。`,`左右手柄可用 grip：${left} / ${right} 帧；有位姿不等于 tracked，按帧查看原始 flags。`,`图集上传：${frames.filter(f=>f.atlas_update?.[1]>0).length} 帧；全量替换：${frames.filter(f=>f.atlas_update?.[2]).length} 帧。`,`未渲染记录：${summary().skipped ? summary().skipped.length : '未提供'} 条；旧记录未提供时不推断为零。`];
     if(!left || !right)messages.push('双手柄移动/模型性能验收缺少有效样本，不能由此证明没有手柄瓶颈。');
     $('health').replaceChildren(...messages.map(v=>element('p',v)));
     $('coverage').textContent=`CPU 主阶段已提供；绘制细分 ${frames.filter(f=>validTimes(f.render_mono_ns,11)).length} 帧；GPU 查询 ${frames.filter(f=>f.gpu?.intervals_ns).length} 帧；线程 CPU 时间 ${frames.filter(f=>validTimes(f.thread_cpu_ns,2)).length} 帧。系统采样 ${system.length} 条。`;
@@ -83,16 +86,25 @@
     if(f.runtime_now_xr_ns && validTimes(f.runtime_now_mono_bracket_ns,2))tags.push(`预测显示提前量（配对时刻）${fmt(ms(f.runtime_now_xr_ns,f.predicted_display_xr_ns))} ms`);
     $('selection').append(...tags.map(t=>element('span',t,'pill')));
     const byTrack=new Map();slices(f).forEach(s=>{if(!byTrack.has(s.track))byTrack.set(s.track,[]);byTrack.get(s.track).push(s);});
-    const total=f.mono_ns[8]-f.mono_ns[0];
-    byTrack.forEach((items,name)=>{const row=element('div',undefined,'track'),strip=element('div',undefined,'strip');row.append(element('span',name),strip);items.forEach(s=>{const e=element('span',s.name,'slice');e.style.left=(s.start-f.mono_ns[0])/total*100+'%';e.style.width=(s.end-s.start)/total*100+'%';e.title=`${s.name}\n开始 +${fmt(ms(f.mono_ns[0],s.start))} ms\n耗时 ${fmt(ms(s.start,s.end))} ms`;strip.append(e);});$('lanes').append(row);});
+    const left=validTimes(f.loop_mono_ns,3)?f.loop_mono_ns[0]:f.mono_ns[0];
+    const right=f.post_frame_complete?f.post_frame_mono_ns[1]:f.mono_ns[8];
+    const total=right-left;
+    byTrack.forEach((items,name)=>{const row=element('div',undefined,'track'),strip=element('div',undefined,'strip');row.append(element('span',name),strip);items.forEach(s=>{const e=element('span',s.name,'slice');e.style.left=(s.start-left)/total*100+'%';e.style.width=(s.end-s.start)/total*100+'%';e.title=`${s.name}\n开始 +${fmt(ms(f.mono_ns[0],s.start))} ms\n耗时 ${fmt(ms(s.start,s.end))} ms`;strip.append(e);});$('lanes').append(row);});
     const g=f.gpu?.intervals_ns;
     $('gpu').append(element('b','GPU 设备时钟 · 独立耗时轨道'),element('p',g?gpuNames.map((n,i)=>`${n} ${fmt(g[i]/1e6)} ms`).join(' / '):`未提供（${f.gpu?.status || '旧采样没有 GPU 查询'}）`));
     showSystem(f);
   }
   function showSystem(f) {
-    const holder=$('system-detail');holder.replaceChildren();if(!system.length)return;
-    if(!metadata?.boot_id || !summary().boot_id || metadata.boot_id!==summary().boot_id){holder.append(element('p','系统记录尚未校验同一 boot；导入匹配 capture.json 与新版 timeline 后才按时间关联。','warning'));return;}
-    const t=f.mono_ns[0],nearest=system.reduce((a,b)=>Math.abs(a.mono_ns-t)<Math.abs(b.mono_ns-t)?a:b);
+    const holder=$('system-detail');holder.replaceChildren();if(!system.length && !kernel.length)return;
+    if(metadata?.clock!=='CLOCK_MONOTONIC' || !metadata?.boot_id || !summary().boot_id || metadata.boot_id!==summary().boot_id){holder.append(element('p','系统记录尚未校验同一 boot；导入匹配 capture.json 与新版 timeline 后才按时间关联。','warning'));return;}
+    const t=f.mono_ns[0];
+    const alignedKernel=metadata.trace?.clock?.includes('[mono]')?kernel:[];
+    const active=alignedKernel.filter(s=>s.start<f.mono_ns[8] && s.end>t);
+    if(kernel.length && !alignedKernel.length)holder.append(element('p','调度 trace 时钟未确认是 mono，暂不关联。','warning'));
+    if(alignedKernel.length){holder.append(element('p',`调度区间 ${active.length} 条与此帧相交；配对不一致 ${kernelErrors}。运行区间可能包含中断，不能视为纯函数执行时间。`));const list=element('ul');active.slice(0,20).forEach(s=>list.append(element('li',`CPU ${s.cpu} · ${s.name} [${s.tid}] · 与本帧重叠 ${fmt(ms(Math.max(s.start,t),Math.min(s.end,f.mono_ns[8])))} ms`)));holder.append(list);}
+    if(metadata.trace)holder.append(element('p',`trace 丢失/覆盖统计保留在 capture.json；缓冲数 ${Object.keys(metadata.trace.buffers||{}).length}，不可当作全程无损。`));
+    if(!system.length)return;
+    const nearest=system.reduce((a,b)=>Math.abs(a.mono_ns-t)<Math.abs(b.mono_ns-t)?a:b);
     const age=Math.abs(nearest.mono_ns-t)/1e6;
     if(age>Math.max(250,(metadata.interval_ms||100)*2)){holder.append(element('p','所选帧不在系统采样覆盖窗口。'));return;}
     holder.append(element('p',`最近系统采样相距 ${fmt(age)} ms；读取跨度 ${fmt(ms(nearest.mono_ns,nearest.read_complete_ns))} ms（非原子快照）`));
@@ -110,11 +122,31 @@
       if(f.gpu?.intervals_ns)events.push({ph:'C',cat:'xr.gpu_duration',name:'GPU durations (ms), sampled after fence',pid,tid:tid('GPU 耗时计数'),ts:f.mono_ns[8]/1000,args:Object.fromEntries(gpuNames.map((n,i)=>[n,f.gpu.intervals_ns[i]/1e6]))});
     });
     (summary().skipped||[]).forEach(s=>{if(validTimes(s.mono_ns,3))events.push({ph:'X',cat:'xr.skipped',name:s.reason,pid,tid:tid('未渲染'),ts:s.mono_ns[0]/1000,dur:(s.mono_ns[2]-s.mono_ns[0])/1000,args:{wait_number:s.wait_number}});});
+    if(metadata?.clock==='CLOCK_MONOTONIC' && metadata?.boot_id && metadata.boot_id===summary().boot_id) {
+      const cpus=new Set();
+      (metadata.trace?.clock?.includes('[mono]')?kernel:[]).forEach(s=>{if(!cpus.has(s.cpu)){cpus.add(s.cpu);events.push({ph:'M',name:'thread_name',pid:2147483646,tid:s.cpu,args:{name:'CPU '+s.cpu+' scheduled (includes IRQ)'}});}events.push({ph:'X',cat:'sched',name:s.name,pid:2147483646,tid:s.cpu,ts:s.start/1000,dur:(s.end-s.start)/1000,args:{linux_tid:s.tid}});});
+      system.forEach(s=>Object.entries(s.sensors||{}).forEach(([name,value])=>{if(value!==null && value!=='' && finite(Number(value)))events.push({ph:'C',cat:'system',name,pid:2147483645,tid:0,ts:s.mono_ns/1000,args:{value:Number(value)}});}));
+    }
     return {traceEvents:events,displayTimeUnit:'ms',metadata:{clock:'CLOCK_MONOTONIC',boot_id:summary().boot_id||null,source,scope:'CPU wall time; GPU durations are counters, not aligned execution slices; synthetic track IDs are not Linux TIDs'}};
+  }
+
+  function loadKernel(text) {
+    const running=new Map(), result=[];let errors=0;
+    for(const line of text.split('\n')) {
+      const match=line.match(/\[(\d+)\].*?\s(\d+\.\d+):\s+sched_switch:\s+prev_comm=(.*?) prev_pid=(\d+).*?==> next_comm=(.*?) next_pid=(\d+)/);
+      if(!match)continue;
+      const cpu=Number(match[1]), now=Number(match[2])*1e9, previous=running.get(cpu);
+      if(previous) {
+        if(previous.tid===Number(match[4]) && now>=previous.start)result.push({...previous,cpu,end:now});else errors++;
+      }
+      running.set(cpu,{tid:Number(match[6]),name:match[5],start:now});
+    }
+    kernel=result;kernelErrors=errors;
   }
   async function fileJSON(input) {const f=input.files[0];if(!f)return null;if(f.size>128*1024*1024)throw Error('文件超过 128 MiB，请缩短采样');return [JSON.parse(await f.text()),f.name];}
   function fail(e){$('status').textContent='导入失败：'+e.message;}
   $('file').onchange=async()=>{try{const r=await fileJSON($('file'));if(r)load(...r);}catch(e){fail(e);}};
+  $('kernel').onchange=async()=>{try{const f=$('kernel').files[0];if(!f)return;if(f.size>128*1024*1024)throw Error('trace 超过 128 MiB');loadKernel(await f.text());refresh();}catch(e){fail(e);}};
   $('metadata').onchange=async()=>{try{const r=await fileJSON($('metadata'));if(r){metadata=r[0];refresh();}}catch(e){fail(e);}};
   $('system').onchange=async()=>{try{const f=$('system').files[0];if(!f)return;if(f.size>128*1024*1024)throw Error('系统文件超过 128 MiB');system=(await f.text()).trim().split('\n').filter(Boolean).map(JSON.parse).filter(s=>finite(s.mono_ns));refresh();}catch(e){fail(e);}};
   $('frame').oninput=e=>select(Number(e.target.value));$('previous').onclick=()=>select(index-1);$('next').onclick=()=>select(index+1);
@@ -122,6 +154,6 @@
   $('overview').onclick=e=>select(Math.floor((e.offsetX-45)/($('overview').clientWidth-60)*frames.length));
   $('captures').onchange=refresh;$('hz').onchange=refresh;window.addEventListener('resize',plot);
   $('export').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(trace())],{type:'application/json'}));const a=element('a');a.href=url;a.download='xr-frame-trace.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
-  window.xrPerf={load,trace};
+  window.xrPerf={load,trace,loadKernel};
   if(window.XR_FRAME_RECORDING)load(window.XR_FRAME_RECORDING,'历史实机样本 · 隔离记录');
 })();

@@ -25,7 +25,7 @@ def write_json(path, value):
 
 def clocks():
     before = time.monotonic_ns()
-    boot = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
+    boot = time.clock_gettime_ns(getattr(time, 'CLOCK_BOOTTIME', 7))
     return dict(mono_before_ns=before, boottime_ns=boot,
                 mono_after_ns=time.monotonic_ns())
 
@@ -204,12 +204,14 @@ def main():
         # A snapshot incurs clone/serialization cost after the measured interval.
         # No capture-request, screen readback, service control or camera open.
         if args.shell_dir and not stop:
+            request_created = False
             try:
                 target = args.shell_dir / 'timeline.json'
                 previous = target.stat().st_mtime_ns if target.exists() else None
                 request = args.shell_dir / 'timeline-request'
                 with request.open('x'):
                     pass
+                request_created = True
                 for _ in range(50):
                     time.sleep(.1)
                     if target.exists() and target.stat().st_mtime_ns != previous:
@@ -218,9 +220,11 @@ def main():
                         break
                 else:
                     meta['errors'].append('shell snapshot timed out; runtime may be idle or lack request support')
-                request.unlink(missing_ok=True)
             except OSError as error:
                 meta['errors'].append('shell snapshot: ' + str(error))
+            finally:
+                if request_created:
+                    request.unlink(missing_ok=True)
         write_json(args.output / 'capture.json', meta)
     print(json.dumps(dict(output=str(args.output), samples=count, errors=meta['errors'])))
 
