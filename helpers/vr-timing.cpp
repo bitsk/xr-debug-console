@@ -32,11 +32,20 @@ int main(int argc,char **argv){
  if(!init(&error,vr::VRApplication_Background,nullptr)||error!=vr::VRInitError_None)return 6;
  auto *compositor=static_cast<vr::IVRCompositor*>(get(vr::IVRCompositor_Version,&error));
  if(!compositor||error!=vr::VRInitError_None){shutdown();return 7;}
+ auto *system=history?static_cast<vr::IVRSystem*>(get(vr::IVRSystem_Version,&error)):nullptr;
  signal(SIGTERM,stop);signal(SIGINT,stop);setvbuf(stdout,nullptr,_IOLBF,0);
  double end=now()+std::strtod(argv[1],nullptr);
  double last_frame_seconds=-1; uint32_t last_index=0; unsigned epoch=0;
  while(running&&now()<end){
   if(history){
+   // Runtime vsync is an observation, not an optical scanout measurement.
+   // Preserve the query bracket: neither runtime seconds nor frame counters
+   // are silently identified with CLOCK_MONOTONIC / kernel vblank sequence.
+   if(system){
+    float elapsed=0;uint64_t counter=0;
+    double vb_before=now();bool valid=system->GetTimeSinceLastVsync(&elapsed,&counter);double vb_after=now();
+    std::printf("MIX_VSYNC {\"mono_before_seconds\":%.9f,\"mono_after_seconds\":%.9f,\"valid\":%s,\"seconds_since_vsync\":%.9f,\"counter\":%llu,\"physical_scanout_verified\":false}\n",vb_before,vb_after,valid?"true":"false",double(elapsed),(unsigned long long)counter);
+   }
    vr::Compositor_FrameTiming batch[128]{};batch[0].m_nSize=sizeof(batch[0]);
    double before=now();uint32_t count=compositor->GetFrameTimings(batch,128);double after=now();
    if(count>128)count=128;
@@ -59,6 +68,14 @@ int main(int argc,char **argv){
      f.m_flCompositorUpdateStartMs,f.m_flCompositorUpdateEndMs,f.m_flCompositorRenderStartMs,
      f.m_nNumVSyncsReadyForUse,f.m_nNumVSyncsToFirstView,f.m_flTransferLatencyMs,
      f.m_HmdPose.bPoseIsValid?"true":"false",int(f.m_HmdPose.eTrackingResult));
+    const auto &p=f.m_HmdPose;
+    std::printf("MIX_FRAME_POSE {\"epoch\":%u,\"frame_index\":%u,\"runtime_frame_seconds\":%.9f,\"scope\":\"runtime reported application render pose; not late warp pose\",\"valid\":%s,\"connected\":%s,\"tracking_result\":%d,\"matrix34\":[",
+     epoch,f.m_nFrameIndex,f.m_flSystemTimeInSeconds,p.bPoseIsValid?"true":"false",p.bDeviceIsConnected?"true":"false",int(p.eTrackingResult));
+    for(unsigned row=0;row<3;++row)for(unsigned col=0;col<4;++col)
+     std::printf("%s%.9g",row||col?",":"",double(p.mDeviceToAbsoluteTracking.m[row][col]));
+    std::printf("],\"world_linear_velocity\":[%.9g,%.9g,%.9g],\"angular_velocity\":[%.9g,%.9g,%.9g]}\n",
+     double(p.vVelocity.v[0]),double(p.vVelocity.v[1]),double(p.vVelocity.v[2]),
+     double(p.vAngularVelocity.v[0]),double(p.vAngularVelocity.v[1]),double(p.vAngularVelocity.v[2]));
     last_frame_seconds=f.m_flSystemTimeInSeconds;last_index=f.m_nFrameIndex;
    }
    if(!count)std::printf("MIX_FRAME_TIMING_STATUS {\"available\":false,\"poll_mono_seconds\":%.9f}\n",after);
