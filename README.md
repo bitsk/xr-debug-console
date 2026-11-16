@@ -69,3 +69,8 @@ was warped or reveal the final warp pose. Shell timeline schema 3 adds separate
 input and render view-location spans and paired runtime clocks; the inspector
 shows both remaining prediction windows without treating their difference as
 a measured sensor-age or optical-latency improvement.
+
+Shell timeline schema 4 separates queue submission (`render_mono_ns`, nine
+boundaries) from post-EndFrame fence waiting and cleanup (`retire_mono_ns`,
+three boundaries). The inspector accepts both this layout and the older eleven
+render boundaries, keeping CPU fence waits distinct from GPU execution.

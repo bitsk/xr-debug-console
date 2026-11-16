@@ -4,6 +4,7 @@
   const stages = ['桌面与 IPC','等待帧 / begin','定位头姿','输入与图集准备','获取交换链','录制 / 提交 / 等待','释放交换链','EndFrame 与状态更新'];
   const inputNames = ['动作与路由','动画 / 栅格化','几何上传','射线反馈'];
   const renderNames = ['复用 fence / begin','彩透准备 / 位姿','录制图集上传','左眼录制','右眼录制','额外图层录制','结束命令缓冲','queueSubmit','等待完成 fence','查询 / 读回 / 释放上传'];
+  const enqueueNames = ['复用 fence / begin','GPU 查询起点','录制图集上传','左眼录制','右眼录制','额外图层录制','结束命令缓冲','queueSubmit'];
   const preNames = ['头姿与控制更新','手关节定位','手部网格更新'];
   const gpuNames = ['上传','左眼','右眼','额外图层'];
   const $ = id => document.getElementById(id);
@@ -26,11 +27,14 @@
   }
   function summary() { return recording?.summary || recording?.timeline || {}; }
   function groups(f) {
-    const list=[['主线程',stages,f.mono_ns]];
+    const mainStages=validTimes(f.retire_mono_ns,3) ? stages.map((name,i)=>i===5?'绘制前定位 / 录制 / 提交':i===7?'EndFrame / 后置回收 / 状态更新':name) : stages;
+    const list=[['主线程',mainStages,f.mono_ns]];
     if(validTimes(f.pre_input_mono_ns,4))list.push(['头姿与手部',preNames,f.pre_input_mono_ns]);
     if(validTimes(f.input_mono_ns,5))list.push(['输入 / UI',inputNames,f.input_mono_ns]);
     if(validTimes(f.render_mono_ns,11))list.push(['绘制细分',renderNames,f.render_mono_ns]);
-    if(validTimes(f.end_frame_mono_ns,3))list.push(['提交后处理',['图层 / EndFrame','状态遥测更新'],f.end_frame_mono_ns]);
+    if(validTimes(f.render_mono_ns,9))list.push(['绘制提交',enqueueNames,f.render_mono_ns]);
+    if(validTimes(f.retire_mono_ns,3))list.push(['提交后资源回收',['等待本帧 fence','查询 / 读回 / 释放上传'],f.retire_mono_ns]);
+    if(validTimes(f.end_frame_mono_ns,3))list.push(['提交后处理',['图层 / EndFrame',validTimes(f.retire_mono_ns,3)?'资源回收 / 状态遥测更新':'状态遥测更新'],f.end_frame_mono_ns]);
     return list;
   }
   function slices(f) {
@@ -64,7 +68,7 @@
     const messages=[`头部 valid + tracked：${head}/${frames.length}；原始 flags 随帧保留。`,`左右手柄可用 grip：${left} / ${right} 帧；有位姿不等于 tracked，按帧查看原始 flags。`,atlasFrames.length?`图集已采样 ${atlasFrames.length}/${frames.length} 帧；上传 ${atlasFrames.filter(f=>f.atlas_update[1]>0).length} 帧，全量替换 ${atlasFrames.filter(f=>f.atlas_update[2]).length} 帧。`:"图集上传计数未提供。",`未渲染记录：${summary().skipped ? summary().skipped.length : '未提供'} 条；旧记录未提供时不推断为零。`];
     if(!left || !right)messages.push('双手柄移动/模型性能验收缺少有效样本，不能由此证明没有手柄瓶颈。');
     $('health').replaceChildren(...messages.map(v=>element('p',v)));
-    $('coverage').textContent=`CPU 主阶段已提供；绘制细分 ${frames.filter(f=>validTimes(f.render_mono_ns,11)).length} 帧；GPU 查询 ${frames.filter(f=>f.gpu?.intervals_ns).length} 帧；线程 CPU 时间 ${frames.filter(f=>validTimes(f.thread_cpu_ns,2)).length} 帧。系统采样 ${system.length} 条。`;
+    $('coverage').textContent=`CPU 主阶段已提供；绘制细分 ${frames.filter(f=>validTimes(f.render_mono_ns,11)||validTimes(f.render_mono_ns,9)).length} 帧；提交后回收 ${frames.filter(f=>validTimes(f.retire_mono_ns,3)).length} 帧；GPU 查询 ${frames.filter(f=>f.gpu?.intervals_ns).length} 帧；线程 CPU 时间 ${frames.filter(f=>validTimes(f.thread_cpu_ns,2)).length} 帧。系统采样 ${system.length} 条。`;
     select(index);
   }
   function plot() {
