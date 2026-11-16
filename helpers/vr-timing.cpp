@@ -5,6 +5,7 @@
 #include <cstring>
 #include <csignal>
 #include <cerrno>
+#include <cmath>
 #include <dlfcn.h>
 #include <time.h>
 #include <unistd.h>
@@ -34,6 +35,15 @@ int main(int argc,char **argv){
  if(!compositor||error!=vr::VRInitError_None){shutdown();return 7;}
  auto *system=history?static_cast<vr::IVRSystem*>(get(vr::IVRSystem_Version,&error)):nullptr;
  signal(SIGTERM,stop);signal(SIGINT,stop);setvbuf(stdout,nullptr,_IOLBF,0);
+ if(system){
+  vr::ETrackedPropertyError hz_error=vr::TrackedProp_Success, photons_error=vr::TrackedProp_Success;
+  const float hz=system->GetFloatTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd,vr::Prop_DisplayFrequency_Float,&hz_error);
+  const float photons=system->GetFloatTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd,vr::Prop_SecondsFromVsyncToPhotons_Float,&photons_error);
+  const bool hz_valid=hz_error==vr::TrackedProp_Success&&std::isfinite(hz)&&hz>0;
+  const bool photons_valid=photons_error==vr::TrackedProp_Success&&std::isfinite(photons);
+  // These are driver declarations, not measured panel scanout or optical latency.
+  std::printf("MIX_DISPLAY_TIMING {\"display_frequency_hz\":%.9g,\"display_frequency_valid\":%s,\"display_frequency_error\":%d,\"seconds_from_vsync_to_photons\":%.9g,\"photons_property_valid\":%s,\"photons_property_error\":%d,\"source\":\"driver_properties\",\"physical_scanout_verified\":false}\n",hz_valid?double(hz):0.0,hz_valid?"true":"false",int(hz_error),photons_valid?double(photons):0.0,photons_valid?"true":"false",int(photons_error));
+ }
  double end=now()+std::strtod(argv[1],nullptr);
  double last_frame_seconds=-1; uint32_t last_index=0; unsigned epoch=0;
  while(running&&now()<end){
@@ -61,9 +71,11 @@ int main(int argc,char **argv){
     if(history_age<0.250)continue;
     uint32_t advance=f.m_nFrameIndex-last_index;
     uint32_t missing=last_frame_seconds>=0&&advance>0&&advance<0x80000000u?advance-1:0;
-    std::printf("MIX_FRAME_TIMING {\"schema\":1,\"epoch\":%u,\"poll_mono_before_seconds\":%.9f,\"poll_mono_after_seconds\":%.9f,\"runtime_frame_seconds\":%.9f,\"clock_mapping_verified\":false,\"history_age_ms\":%.6f,\"frame_index\":%u,\"missing_indices_before\":%u,\"stats_pid\":%u,\"presents\":%u,\"mispresents\":%u,\"dropped\":%u,\"reprojection_flags\":%u,\"pre_submit_gpu_ms\":%.6f,\"post_submit_gpu_ms\":%.6f,\"total_render_gpu_ms\":%.6f,\"compositor_gpu_ms\":%.6f,\"compositor_cpu_ms\":%.6f,\"compositor_idle_ms\":%.6f,\"client_interval_ms\":%.6f,\"present_call_ms\":%.6f,\"wait_present_ms\":%.6f,\"submit_ms\":%.6f,\"wait_get_poses_ms\":%.6f,\"new_poses_ready_ms\":%.6f,\"new_frame_ready_ms\":%.6f,\"compositor_update_start_ms\":%.6f,\"compositor_update_end_ms\":%.6f,\"compositor_render_start_ms\":%.6f,\"vsyncs_ready\":%u,\"vsyncs_to_first_view\":%u,\"transfer_latency_ms\":%.6f,\"hmd_pose_valid\":%s,\"tracking_result\":%d}\n",
+    std::printf("MIX_FRAME_TIMING {\"schema\":2,\"epoch\":%u,\"poll_mono_before_seconds\":%.9f,\"poll_mono_after_seconds\":%.9f,\"runtime_frame_seconds\":%.9f,\"clock_mapping_verified\":false,\"history_age_ms\":%.6f,\"frame_index\":%u,\"missing_indices_before\":%u,\"stats_pid\":%u,\"presents\":%u,\"mispresents\":%u,\"dropped\":%u,\"reprojection_flags\":%u,\"additional_predicted_frames\":%u,\"throttled_frames\":%u,\"async_reprojection_active\":%s,\"pre_submit_gpu_ms\":%.6f,\"post_submit_gpu_ms\":%.6f,\"total_render_gpu_ms\":%.6f,\"compositor_gpu_ms\":%.6f,\"compositor_cpu_ms\":%.6f,\"compositor_idle_ms\":%.6f,\"client_interval_ms\":%.6f,\"present_call_ms\":%.6f,\"wait_present_ms\":%.6f,\"submit_ms\":%.6f,\"wait_get_poses_ms\":%.6f,\"new_poses_ready_ms\":%.6f,\"new_frame_ready_ms\":%.6f,\"compositor_update_start_ms\":%.6f,\"compositor_update_end_ms\":%.6f,\"compositor_render_start_ms\":%.6f,\"vsyncs_ready\":%u,\"vsyncs_to_first_view\":%u,\"transfer_latency_ms\":%.6f,\"hmd_pose_valid\":%s,\"tracking_result\":%d}\n",
      epoch,before,after,f.m_flSystemTimeInSeconds,history_age*1000.0,f.m_nFrameIndex,missing,stats.m_nPid,
      f.m_nNumFramePresents,f.m_nNumMisPresented,f.m_nNumDroppedFrames,f.m_nReprojectionFlags,
+     VR_COMPOSITOR_ADDITIONAL_PREDICTED_FRAMES(f),VR_COMPOSITOR_NUMBER_OF_THROTTLED_FRAMES(f),
+     (f.m_nReprojectionFlags&vr::VRCompositor_ReprojectionAsync)?"true":"false",
      f.m_flPreSubmitGpuMs,f.m_flPostSubmitGpuMs,f.m_flTotalRenderGpuMs,f.m_flCompositorRenderGpuMs,
      f.m_flCompositorRenderCpuMs,f.m_flCompositorIdleCpuMs,f.m_flClientFrameIntervalMs,
      f.m_flPresentCallCpuMs,f.m_flWaitForPresentCpuMs,f.m_flSubmitFrameMs,

@@ -37,6 +37,7 @@
     const result=[];
     groups(f).forEach(([track,names,times])=>names.forEach((name,i)=>result.push({track,name,start:times[i],end:times[i+1]})));
     [['动作同步',f.action_sync_span],['左手状态读取',f.controller_read_spans?.[0]],['右手状态读取',f.controller_read_spans?.[1]]].forEach(([name,t])=>{if(validTimes(t,2))result.push({track:'动作读取',name,start:t[0],end:t[1]});});
+    [['输入取姿态',f.input_view_locate_mono_ns],['绘制前取姿态',f.render_view_locate_mono_ns]].forEach(([name,t])=>{if(validTimes(t,2))result.push({track:'头姿定位',name,start:t[0],end:t[1]});});
     (f.draw_spans || []).forEach(s=>{if(validTimes(s.mono_ns,2))result.push({track:'模型与面板录制',name:`${s.eye?'右':'左'} ${s.pass} / ${s.stage}`,start:s.mono_ns[0],end:s.mono_ns[1]});});
     if(validTimes(f.loop_mono_ns,3))['帧前事件处理','采样请求检查 / 导出'].forEach((name,i)=>result.push({track:'帧外工作',name,start:f.loop_mono_ns[i],end:f.loop_mono_ns[i+1]}));
     if(f.post_frame_complete && validTimes(f.post_frame_mono_ns,2))result.push({track:'帧外工作',name:'记录 / 截图文件 / 日志',start:f.post_frame_mono_ns[0],end:f.post_frame_mono_ns[1]});
@@ -85,6 +86,8 @@
     if(validTimes(f.thread_cpu_ns,2))tags.push(`线程实际 CPU ${fmt(ms(...f.thread_cpu_ns))} ms`,`核 ${f.cpu_core?.join(' → ')}`);
     if(f.model_vertices)tags.push(`控制器/手模型顶点 ${JSON.stringify(f.model_vertices)}`,`面板实例 ${f.panel_instances}`);
     if(f.runtime_now_xr_ns && validTimes(f.runtime_now_mono_bracket_ns,2))tags.push(`预测显示提前量（配对时刻）${fmt(ms(f.runtime_now_xr_ns,f.predicted_display_xr_ns))} ms`);
+    if(f.render_runtime_now_xr_ns && validTimes(f.render_runtime_now_mono_bracket_ns,2))tags.push(`绘制前剩余预测窗口（配对时刻）${fmt(ms(f.render_runtime_now_xr_ns,f.predicted_display_xr_ns))} ms`);
+    if(validTimes(f.input_view_locate_mono_ns,2) && validTimes(f.render_view_locate_mono_ns,2))tags.push(`两次取姿态间隔 ${fmt(ms(f.input_view_locate_mono_ns[1],f.render_view_locate_mono_ns[0]))} ms（不等同于传感器新鲜度改善）`);
     const previous=all[positions.get(f)-1];
     if(previous && previous.number+1===f.number && f.predicted_display_xr_ns>previous.predicted_display_xr_ns) {
       function delta(a,b) {if(!Array.isArray(a)||!Array.isArray(b)||a.length!==7||b.length!==7||!a.every(finite)||!b.every(finite))return '缺少连续有效样本';const d=Math.hypot(...a.slice(0,3).map((v,i)=>v-b[i]))*1000;const an=Math.hypot(...a.slice(3)),bn=Math.hypot(...b.slice(3));if(!an||!bn)return '四元数无效';const dot=Math.abs(a.slice(3).reduce((v,x,i)=>v+x*b[i+3],0)/(an*bn));return `${d.toFixed(2)} mm / ${(2*Math.acos(Math.min(1,dot))*180/Math.PI).toFixed(2)}°`;}

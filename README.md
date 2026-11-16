@@ -61,3 +61,11 @@ only recordings with the same boot and monotonic clock.
 starts XR or opens cameras. The existing OpenVR observer also accepts `--history`
 as its fourth argument for per-frame history instead of the default 500ms snapshot.
 See [the profiling guide](https://github.com/bitsk/openkylin-xr-docs/blob/main/wiki/frame-profiling.md).
+
+The history observer records driver display timing declarations and decodes
+additional predicted frames and throttled frames from the OpenVR flags. The
+async flag only identifies the active mode; it does not establish that a frame
+was warped or reveal the final warp pose. Shell timeline schema 3 adds separate
+input and render view-location spans and paired runtime clocks; the inspector
+shows both remaining prediction windows without treating their difference as
+a measured sensor-age or optical-latency improvement.
