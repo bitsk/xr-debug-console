@@ -1,0 +1,155 @@
+{
+  "schema": 1,
+  "sha256": "9b1bd5fe4463592cbc71b2517b9ceb0a0fcd66cd6885a19dca4be0784bf6c265",
+  "architecture": "ELF64 little-endian AArch64",
+  "raw_epoch_elf_va": "0x5b63a8",
+  "scope": "Opt-in instruction sampling; no runtime prediction settings are changed.",
+  "points": [
+    {
+      "name": "present_time_stored",
+      "elf_va": "0x1498fc",
+      "file_offset": "0x1498fc",
+      "previous_instruction_hex": "28382bfd",
+      "instruction_hex": "230741b9",
+      "next_instruction_hex": "43a80034",
+      "fields": [
+        {
+          "name": "render_thread",
+          "fetch": "%x19:u64",
+          "encoding": "u64",
+          "abi_source": "x19=RenderThread*"
+        },
+        {
+          "name": "present_time_bits",
+          "fetch": "+22128(%x1):u64",
+          "encoding": "f64",
+          "abi_source": "previous str d8,[x1,#22128]; actual selected native presentTime"
+        }
+      ]
+    },
+    {
+      "name": "signal_deadline_stored",
+      "elf_va": "0x149a28",
+      "file_offset": "0x149a28",
+      "previous_instruction_hex": "c1ae066d",
+      "instruction_hex": "a0e30094",
+      "next_instruction_hex": "c0020291",
+      "fields": [
+        {
+          "name": "render_thread",
+          "fetch": "%x19:u64",
+          "encoding": "u64",
+          "abi_source": "x19=RenderThread*"
+        },
+        {
+          "name": "signal_deadline_bits",
+          "fetch": "+104(%x22):u64",
+          "encoding": "f64",
+          "abi_source": "previous stp d1,d11,[x22,#104]; signal start"
+        },
+        {
+          "name": "next_vsync_bits",
+          "fetch": "+112(%x22):u64",
+          "encoding": "f64",
+          "abi_source": "previous stp d1,d11,[x22,#104]; nextVsync"
+        }
+      ]
+    },
+    {
+      "name": "after_signal_clock_stored",
+      "elf_va": "0x14a75c",
+      "file_offset": "0x14a75c",
+      "previous_instruction_hex": "e06700fd",
+      "instruction_hex": "612640f9",
+      "next_instruction_hex": "a33700b4",
+      "fields": [
+        {
+          "name": "render_thread",
+          "fetch": "%x19:u64",
+          "encoding": "u64",
+          "abi_source": "x19=RenderThread*"
+        },
+        {
+          "name": "runtime_now_bits",
+          "fetch": "+200(%sp):u64",
+          "encoding": "f64",
+          "abi_source": "previous str d0,[sp,#200]; after present and signal waits"
+        },
+        {
+          "name": "rolling_target_bits",
+          "fetch": "+256(%sp):u64",
+          "encoding": "f64",
+          "abi_source": "UpdateAsync stack absolute rolling start target"
+        },
+        {
+          "name": "midpoint_target_bits",
+          "fetch": "+224(%sp):u64",
+          "encoding": "f64",
+          "abi_source": "UpdateAsync stack absolute midpoint target; before later float overwrite"
+        },
+        {
+          "name": "override_pose_ptr",
+          "fetch": "%x3:u64",
+          "encoding": "u64",
+          "abi_source": "loaded from [x19,#3960] at ELF0x14a754; nonzero bypasses fresh query"
+        },
+        {
+          "name": "root_flag_30",
+          "fetch": "+48(+72(%x19)):u8",
+          "encoding": "u8",
+          "abi_source": "nested context+0x30; x1 context load at this instruction has NOT executed; flag can bypass fresh query, setting meaning unverified"
+        }
+      ]
+    },
+    {
+      "name": "late_first_query",
+      "elf_va": "0x14aeb8",
+      "file_offset": "0x14aeb8",
+      "previous_instruction_hex": "843040f9",
+      "instruction_hex": "80003fd6",
+      "next_instruction_hex": "e0031291",
+      "fields": [
+        {
+          "name": "render_thread",
+          "fetch": "%x19:u64",
+          "encoding": "u64",
+          "abi_source": "x19=RenderThread*"
+        },
+        {
+          "name": "end_horizon_bits",
+          "fetch": "+224(%sp):u32",
+          "encoding": "f32",
+          "abi_source": "SP+224 is END horizon, not directly first rolling horizon; first=END only in mid-frame mode"
+        }
+      ]
+    },
+    {
+      "name": "late_second_query",
+      "elf_va": "0x14b238",
+      "file_offset": "0x14b238",
+      "previous_instruction_hex": "843040f9",
+      "instruction_hex": "80003fd6",
+      "next_instruction_hex": "e1e340bd",
+      "fields": [
+        {
+          "name": "render_thread",
+          "fetch": "%x19:u64",
+          "encoding": "u64",
+          "abi_source": "x19=RenderThread*"
+        },
+        {
+          "name": "end_horizon_bits",
+          "fetch": "+224(%sp):u32",
+          "encoding": "f32",
+          "abi_source": "SP+224 second/end query horizon immediately before BLR x4"
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Five traps per complete rolling update, fewer on bypass/mid-frame paths; trap overhead requires bounded interpretation.",
+    "All currently existing target TIDs receive filters; newly created TIDs may be missed until the next sampling refresh.",
+    "No generic FP register fetch; exact stored scalar bits are decoded offline.",
+    "RAW epoch is a separately validated read-only BSS memory read; permission failures remain unknown."
+  ]
+}

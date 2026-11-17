@@ -3,12 +3,16 @@
 """Bounded on-device XR system capture; never starts or stops XR/cameras."""
 import argparse
 import glob
+import hashlib
 import json
 import os
+import math
+import re
 from pathlib import Path
 import shutil
 import signal
 import stat
+import struct
 import subprocess
 import time
 
@@ -26,9 +30,15 @@ def write_json(path, value):
 
 def clocks():
     before = time.monotonic_ns()
+    raw_before = time.monotonic_ns()
+    raw = time.clock_gettime_ns(time.CLOCK_MONOTONIC_RAW)
+    raw_after = time.monotonic_ns()
     boot = time.clock_gettime_ns(getattr(time, 'CLOCK_BOOTTIME', 7))
     return dict(mono_before_ns=before, boottime_ns=boot,
-                mono_after_ns=time.monotonic_ns())
+                mono_after_ns=time.monotonic_ns(), raw_ns=raw,
+                raw_mono_before_ns=raw_before, raw_mono_after_ns=raw_after,
+                raw_to_mono_offset_lower_ns=raw_before - raw,
+                raw_to_mono_offset_upper_ns=raw_after - raw)
 
 
 def threads(pids):
@@ -114,9 +124,302 @@ TRACE_EVENTS = [
 IDLE_EVENTS = ['power/cpu_idle']
 
 
+
+# This profile belongs to one reviewed binary, not a generic native-memory reader.
+WARP_SHA256 = '9b1bd5fe4463592cbc71b2517b9ceb0a0fcd66cd6885a19dca4be0784bf6c265'
+WARP_PROFILE = 'steamvr-linuxarm64-late-warp.json'
+
+
+def default_warp_profile():
+    installed = Path('/usr/share/xr-debug/trace-profiles') / WARP_PROFILE
+    local = Path(__file__).resolve().parent / 'trace-profiles' / WARP_PROFILE
+    return local if local.is_file() else installed
+
+
+def elf_profile(stream, profile):
+    """Check exact file identity, AArch64 ELF and each executable VA/file offset."""
+    stream.seek(0)
+    hasher = hashlib.sha256()
+    for block in iter(lambda: stream.read(1024 * 1024), b''):
+        hasher.update(block)
+    digest = hasher.hexdigest()
+    if profile.get('schema') != 1 or profile.get('sha256') != WARP_SHA256 or digest != WARP_SHA256:
+        raise ValueError('warp profile requires the reviewed compositor SHA256: ' + WARP_SHA256)
+    stream.seek(0)
+    header = stream.read(64)
+    if len(header) != 64 or header[:7] != b'\x7fELF\x02\x01\x01':
+        raise ValueError('warp target must be ELF64 little endian')
+    values = struct.unpack('<16sHHIQQQIHHHHHH', header)
+    if values[2] != 183 or values[1] not in (2, 3):
+        raise ValueError('warp target must be an AArch64 executable')
+    phoff, phsize, phnum = values[5], values[9], values[10]
+    if phsize != 56 or not 0 < phnum < 1024:
+        raise ValueError('unexpected ELF program headers')
+    loads = []
+    for index in range(phnum):
+        stream.seek(phoff + index * phsize)
+        kind, flags, offset, va, _, filesz, memsz, _ = struct.unpack('<IIQQQQQQ', stream.read(56))
+        if kind == 1:
+            loads.append(dict(flags=flags, offset=offset, va=va, filesz=filesz, memsz=memsz))
+    points = profile.get('points', [])
+    if len(points) != 5 or len({p['name'] for p in points}) != len(points):
+        raise ValueError('expected the five reviewed warp points')
+    for point in points:
+        if not re.fullmatch('[a-z][a-z0-9_]*', point['name']):
+            raise ValueError('invalid event name')
+        va, offset = int(point['elf_va'], 0), int(point['file_offset'], 0)
+        matches = [p for p in loads if p['flags'] & 1 and p['va'] <= va - 4 and va + 8 <= p['va'] + p['filesz']]
+        if len(matches) != 1 or matches[0]['offset'] + va - matches[0]['va'] != offset:
+            raise ValueError('warp VA/file offset is outside a matching executable PT_LOAD')
+        stream.seek(offset - 4)
+        expected = bytes.fromhex(point['previous_instruction_hex'] + point['instruction_hex'] + point['next_instruction_hex'])
+        if stream.read(12) != expected:
+            raise ValueError('warp instruction mismatch: ' + point['name'])
+        for field in point['fields']:
+            # Restricted to registers and one/two-level positive memory reads.
+            if not re.fullmatch('[a-z][a-z0-9_]*', field['name']) or not re.fullmatch(
+                    r'(?:%x\d+|\+\d+\(%(?:x\d+|sp)\)|\+\d+\(\+\d+\(%x\d+\)\)):(?:u64|u32|u8)', field['fetch']):
+                raise ValueError('unexpected reviewed fetch argument')
+            if field['encoding'] not in ('f64', 'f32', 'u64', 'u8'):
+                raise ValueError('unexpected field encoding')
+    epoch = int(profile['raw_epoch_elf_va'], 0)
+    if not any(p['flags'] & 2 and p['va'] <= epoch and epoch + 8 <= p['va'] + p['memsz'] for p in loads):
+        raise ValueError('runtime RAW epoch is outside writable PT_LOAD memory')
+    return dict(sha256=digest, machine='AArch64', loads=loads,
+                verified_points=[p['name'] for p in points])
+
+
+def process_start(pid):
+    value = read(f'/proc/{pid}/stat')
+    if not value or ')' not in value:
+        raise ValueError('warp target process disappeared')
+    return int(value[value.rfind(')') + 2:].split()[19])
+
+
+class Warp:
+    def __init__(self, pid, profile_path):
+        self.pid, self.fd, self.created, self.root = pid, None, [], None
+        self.profile = json.loads(profile_path.read_text())
+        self.info = dict(requested=True, profile=self.profile,
+                         profile_sha256=hashlib.sha256(profile_path.read_bytes()).hexdigest(),
+                         pid=pid, epochs=[], tid_filters=[], registered=[], removed=[], errors=[], default_enabled=False,
+                         observation_scope='instruction probes perturb timing; no optical timing or wearer acceptance')
+        self.group = f'xr_warp_{os.getpid()}_{time.monotonic_ns()}'
+        self.last_tids = None
+
+    def prepare(self):
+        # Keep this inode open for registration; /proc/self/fd avoids path replacement.
+        self.info['start_ticks'] = process_start(self.pid)
+        self.fd = open(f'/proc/{self.pid}/exe', 'rb')
+        self.exe_stat = os.fstat(self.fd.fileno())
+        self.info['elf'] = elf_profile(self.fd, self.profile)
+        self.info['exe'] = os.readlink(f'/proc/{self.pid}/exe')
+        self.info['exe_device'] = self.exe_stat.st_dev
+        self.info['exe_inode'] = self.exe_stat.st_ino
+        self.check_identity()
+
+    def check_identity(self):
+        current = os.stat(f'/proc/{self.pid}/exe')
+        if process_start(self.pid) != self.info['start_ticks'] or (
+                current.st_dev, current.st_ino) != (self.exe_stat.st_dev, self.exe_stat.st_ino):
+            raise ValueError('warp target PID/start ticks or executable inode changed')
+
+    def epoch(self, phase):
+        result = dict(phase=phase, clocks_before=clocks(), known=False)
+        try:
+            self.check_identity()
+            page = os.sysconf('SC_PAGE_SIZE')
+            mappings = []
+            for line in Path(f'/proc/{self.pid}/maps').read_text().splitlines():
+                parts = line.split(maxsplit=5)
+                lo, hi = (int(v, 16) for v in parts[0].split('-'))
+                major, minor = (int(v, 16) for v in parts[3].split(':'))
+                mappings.append(dict(lo=lo, hi=hi, perms=parts[1], offset=int(parts[2], 16),
+                                     dev=os.makedev(major, minor), inode=int(parts[4])))
+            biases = set()
+            for mapping in mappings:
+                if (mapping['dev'], mapping['inode']) != (self.exe_stat.st_dev, self.exe_stat.st_ino):
+                    continue
+                for load in self.info['elf']['loads']:
+                    if mapping['offset'] == load['offset'] // page * page:
+                        candidate = mapping['lo'] - load['va'] // page * page
+                        # Require an executable mapping to establish the load bias.
+                        if 'x' in mapping['perms'] and load['flags'] & 1:
+                            biases.add(candidate)
+            if len(biases) != 1:
+                raise ValueError('cannot uniquely verify runtime load bias from executable inode mappings')
+            bias = biases.pop()
+            address = bias + int(self.profile['raw_epoch_elf_va'], 0)
+            mapping = next((m for m in mappings if m['lo'] <= address and address + 8 <= m['hi'] and 'r' in m['perms']), None)
+            if mapping is None:
+                raise ValueError('RAW epoch address lacks a readable process mapping')
+            with open(f'/proc/{self.pid}/mem', 'rb', buffering=0) as stream:
+                raw = os.pread(stream.fileno(), 8, address)
+            if len(raw) != 8:
+                raise ValueError('short runtime RAW epoch read')
+            self.check_identity()
+            result.update(known=True, raw_u64_hex='0x' + raw[::-1].hex(),
+                          raw_epoch_ns=int.from_bytes(raw, 'little'), load_bias=hex(bias),
+                          process_address=hex(address), mapping=mapping,
+                          source='8-byte read-only /proc/PID/mem; BSS ELF VA, not file offset')
+        except (OSError, ValueError) as error:
+            result['error'] = str(error)
+        result['clocks_after'] = clocks()
+        self.info['epochs'].append(result)
+
+    def command(self, command):
+        # Append exactly one owned definition/deletion; never clear global probes.
+        fd = os.open(self.root / 'uprobe_events', os.O_WRONLY | os.O_APPEND)
+        try:
+            data = (command + '\n').encode()
+            if os.write(fd, data) != len(data):
+                raise OSError('short dynamic probe control write')
+        finally:
+            os.close(fd)
+
+    def install(self, root, instance):
+        self.root, self.instance = root, instance
+        self.info['group'] = self.group
+        self.epoch('before_enable')
+        for point in self.profile['points']:
+            event = point['name']
+            fetches = ' '.join(f"{f['name']}={f['fetch']}" for f in point['fields'])
+            self.command(f'p:{self.group}/{event} /proc/self/fd/{self.fd.fileno()}:{point["file_offset"]} {fetches}')
+            self.created.append(event)
+            self.info['registered'].append(event)
+        self.refresh()
+        for event in self.created:
+            (instance / 'events' / self.group / event / 'enable').write_text('1')
+        self.check_identity()
+        self.info['enabled'] = list(self.created)
+
+    def refresh(self):
+        self.check_identity()
+        tids = sorted(int(p.name) for p in Path(f'/proc/{self.pid}/task').iterdir())
+        if not tids:
+            raise ValueError('warp target has no threads')
+        if tids != self.last_tids:
+            value = ' || '.join(f'common_pid == {tid}' for tid in tids)
+            before = clocks()
+            for event in self.created:
+                (self.instance / 'events' / self.group / event / 'filter').write_text(value)
+            self.info['tid_filters'].append(dict(tids=tids, before=before, after=clocks()))
+            self.last_tids = tids
+        self.check_identity()
+
+    def finish_epoch(self):
+        if self.fd is not None and 'elf' in self.info:
+            self.epoch('after_disable')
+
+    def cleanup(self):
+        for event in reversed(self.created):
+            try:
+                self.command(f'-:{self.group}/{event}')
+                self.info['removed'].append(event)
+            except OSError as error:
+                self.info['errors'].append('owned probe cleanup: ' + str(error))
+        self.created.clear()
+        if self.fd is not None:
+            self.fd.close()
+            self.fd = None
+
+
+def parse_warp(output, info):
+    """Decode raw values; no prediction policy, rejection gates or smoothing."""
+    points = {p['name']: p for p in info['profile']['points']}
+    samples = {}
+    event_counts, branch_counts, field_errors = {}, {}, {}
+    total = 0
+    errors = []
+    epochs = info.get('epochs', [])
+    stable_epoch = (len(epochs) == 2 and all(e.get('known') for e in epochs) and
+                    epochs[0]['raw_epoch_ns'] == epochs[1]['raw_epoch_ns'])
+    epoch = epochs[0]['raw_epoch_ns'] if stable_epoch else None
+    # trace_clock=mono timestamp is distinct from runtime RAW-minus-epoch.
+    pattern = re.compile(r'\s(\d+\.\d+):\s+(?:' + re.escape(info.get('group', '')) + r':)?(' + '|'.join(points) + r'):\s+(.*)')
+    with (output / 'system.ftrace').open() as source, (output / 'warp-events.jsonl').open('w') as dest:
+        for number, line in enumerate(source, 1):
+            match = pattern.search(line)
+            if not match:
+                continue
+            timestamp, name, payload = match.groups()
+            seconds, fractional = timestamp.split('.')
+            identity = re.search(r'-(\d+)\s+(?:\([^)]*\)\s+)?\[(\d+)\]', line[:match.start()])
+            record = dict(event=name, source_line=number, trace_timestamp=timestamp,
+                          trace_mono_ns=int(seconds) * 10**9 + int((fractional + '000000000')[:9]),
+                          trace_timestamp_decimal_places=len(fractional),
+                          tid=int(identity.group(1)) if identity else None,
+                          cpu=int(identity.group(2)) if identity else None,
+                          raw_payload=payload, fields={}, measured={})
+            raw_fields = dict(re.findall(r'\b([a-z][a-z0-9_]*)=(\S+)', payload))
+            for field in points[name]['fields']:
+                raw = raw_fields.get(field['name'])
+                value = dict(raw=raw, fetch=field['fetch'], abi_source=field['abi_source'], encoding=field['encoding'])
+                try:
+                    bits = int(raw, 16) if raw and raw.startswith('0x') else int(raw, 10)
+                    size = 8 if field['encoding'] in ('f64', 'u64') else 4 if field['encoding'] == 'f32' else 1
+                    packed = bits.to_bytes(size, 'little', signed=False)
+                    value['bits_hex'] = '0x' + packed[::-1].hex()
+                    decoded = struct.unpack('<d' if size == 8 else '<f', packed)[0] if field['encoding'].startswith('f') else bits
+                    if isinstance(decoded, float) and not math.isfinite(decoded):
+                        raise ValueError('nonfinite floating value')
+                    value['value'] = decoded
+                except (TypeError, ValueError, OverflowError) as error:
+                    value['error'] = str(error)
+                record['fields'][field['name']] = value
+                if 'error' in value:
+                    key = name + '/' + field['name']
+                    field_errors[key] = field_errors.get(key, 0) + 1
+            def decoded(key):
+                return record['fields'].get(key, {}).get('value')
+            if name == 'after_signal_clock_stored':
+                now = decoded('runtime_now_bits')
+                for key in ('rolling_target_bits', 'midpoint_target_bits'):
+                    target = decoded(key)
+                    if now is not None and target is not None:
+                        record['measured'][key.replace('_bits', '_minus_now_ms')] = (target - now) * 1000
+                record['fresh_query_branch'] = ('bypassed_by_override' if decoded('override_pose_ptr') else
+                    'bypassed_by_root_flag' if decoded('root_flag_30') else
+                    'eligible_at_this_instruction' if decoded('override_pose_ptr') == 0 and decoded('root_flag_30') == 0 else 'unknown')
+                branch = record['fresh_query_branch']
+                branch_counts[branch] = branch_counts.get(branch, 0) + 1
+                if now is not None and epoch is not None:
+                    record['runtime_now_raw_ns_from_sampled_epoch'] = epoch + round(now * 1e9)
+                    # Epoch agreement is endpoint evidence, not proof that no reset occurred between reads.
+                    record['epoch_scope'] = 'equal before/after snapshots; mid-capture epoch changes unobserved'
+            elif name in ('late_first_query', 'late_second_query'):
+                value = decoded('end_horizon_bits')
+                if value is not None:
+                    record['measured']['end_horizon_ms'] = value * 1000
+            for key, value in record['measured'].items():
+                samples.setdefault(name + '/' + key, []).append(value)
+            dest.write(json.dumps(record, separators=(',', ':'), allow_nan=False) + '\n')
+            total += 1
+            event_counts[name] = event_counts.get(name, 0) + 1
+    distribution = {}
+    for key, values in samples.items():
+        values.sort()
+        distribution[key] = dict(count=len(values), minimum=min(values), maximum=max(values),
+            p50=values[(len(values)-1)//2], p90=values[(len(values)-1)*9//10])
+    result = dict(schema=1, events=total, event_counts=event_counts,
+        branch_counts=branch_counts, field_errors=field_errors, measured_distributions=distribution,
+        endpoint_epoch_equal=stable_epoch, raw_epoch_ns=epoch,
+        runtime_clock='CLOCK_MONOTONIC_RAW minus runtime epoch', trace_clock='CLOCK_MONOTONIC',
+        clock_anchors=[e.get('clocks_before') for e in epochs] + [e.get('clocks_after') for e in epochs],
+        scope=['after_signal windows are measured at the stored now, before subsequent pose-query work',
+               'late_first_query stack float is END horizon; first rolling horizon is not directly measured',
+               'midpoint/rolling targets do not establish which branch produced final pose',
+               'RAW/monotonic bracket anchors are retained; no constant epoch or RAW-to-mono offset is invented',
+               'new TIDs are covered after the next sampled filter refresh; between-refresh gaps are possible',
+               'uprobes perturb timing; no optical or wearer validation'], errors=errors)
+    write_json(output / 'warp-summary.json', result)
+    return result
+
+
 class Trace:
-    def __init__(self, output, buffer_kb=4096, idle=False, extra=()):
+    def __init__(self, output, buffer_kb=4096, idle=False, extra=(), warp=None):
         self.path = None
+        self.warp = warp
         self.output = output
         self.buffer_kb = buffer_kb
         self.events = TRACE_EVENTS + (IDLE_EVENTS if idle else []) + [
@@ -125,15 +428,21 @@ class Trace:
                          unavailable=[], errors=[])
 
     def start(self):
+        if self.warp:
+            self.warp.prepare()  # Verify /proc/PID/exe before touching tracefs.
         roots = [Path('/sys/kernel/tracing'), Path('/sys/kernel/debug/tracing')]
         root = next((p for p in roots if (p / 'instances').is_dir()), None)
         if root is None:
             self.info['errors'].append('tracefs instances unavailable; global tracing untouched')
+            if self.warp:
+                raise ValueError('warp capture requires a private tracefs instance')
             return
         try:
             path = root / 'instances' / f'xr-perf-{os.getpid()}-{time.monotonic_ns()}'
             path.mkdir()  # Exclusive ownership; never re-use someone else's instance.
             self.path = path
+            self.info['instance'] = path.name
+            self.info['instance_removed'] = False
             (path / 'tracing_on').write_text('0')
             (path / 'trace_clock').write_text('mono')
             (path / 'buffer_size_kb').write_text(str(self.buffer_kb))
@@ -144,11 +453,15 @@ class Trace:
                     continue
                 enable.write_text('1')
                 self.info['enabled'].append(event)
+            if self.warp:
+                self.warp.install(root, path)
             self.info['clock'] = read(path / 'trace_clock')
             self.info['start'] = clocks()
             (path / 'tracing_on').write_text('1')
-        except OSError as error:
+        except (OSError, ValueError) as error:
             self.info['errors'].append(str(error))
+            if self.warp:
+                raise
 
     def stop(self):
         if self.path is None:
@@ -156,6 +469,8 @@ class Trace:
         try:
             (self.path / 'tracing_on').write_text('0')
             self.info['stop'] = clocks()
+            if self.warp:
+                self.warp.finish_epoch()
             self.info['buffers'] = {p.parent.name: read(p) for p in self.path.glob('per_cpu/cpu*/stats')}
             # Bounded by the per-CPU ring; retain overwrite counters and headers.
             with (self.path / 'trace').open('rb') as source, (self.output / 'system.ftrace').open('wb') as dest:
@@ -165,14 +480,26 @@ class Trace:
         finally:
             try:
                 (self.path / 'events/enable').write_text('0')
+            except OSError as error:
+                self.info['errors'].append('instance disable: ' + str(error))
+                if self.warp:
+                    for event in self.warp.created:
+                        try:
+                            (self.path / 'events' / self.warp.group / event / 'enable').write_text('0')
+                        except OSError as disable_error:
+                            self.info['errors'].append('owned event disable: ' + str(disable_error))
+            try:
                 self.path.rmdir()
+                self.info['instance_removed'] = True
             except OSError as error:
                 self.info['errors'].append('instance cleanup: ' + str(error))
+            if self.warp:
+                self.warp.cleanup()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', type=Path, required=True, help='new private evidence directory')
+    parser.add_argument('--output', type=Path, help='new private evidence directory')
     parser.add_argument('--pid', action='append', type=int, default=[], help='explicit process; repeat for shell, runtime, tracking and UI')
     parser.add_argument('--seconds', type=float, default=15)
     parser.add_argument('--interval-ms', type=int, default=100)
@@ -187,7 +514,30 @@ def main():
                         help='additional tracefs event; repeatable')
     parser.add_argument('--perf', action='store_true', help='optional 99Hz DWARF CPU stacks for selected PIDs')
     parser.add_argument('--shell-dir', type=Path, help='existing shell summary directory; request JSON only after capture')
+    parser.add_argument('--warp-pid', type=int, help='opt-in reviewed final-warp uprobes; implies --trace; root usually needed')
+    parser.add_argument('--warp-profile', type=Path, default=default_warp_profile())
+    parser.add_argument('--check-warp-profile', type=Path, metavar='ELF', help='offline SHA/ELF/VA/instruction verification; no tracing')
+    parser.add_argument('--parse-warp-capture', type=Path, metavar='DIR', help='offline re-decode an existing warp capture')
     args = parser.parse_args()
+    if args.check_warp_profile:
+        try:
+            with args.check_warp_profile.open('rb') as stream:
+                print(json.dumps(elf_profile(stream, json.loads(args.warp_profile.read_text()))))
+        except (OSError, ValueError, KeyError, struct.error) as error:
+            parser.error(str(error))
+        return
+    if args.parse_warp_capture:
+        capture = json.loads((args.parse_warp_capture / 'capture.json').read_text())
+        print(json.dumps(parse_warp(args.parse_warp_capture, capture['warp'])))
+        return
+    if not args.output:
+        parser.error('--output is required for capture')
+    if args.warp_pid is not None:
+        if args.warp_pid <= 0:
+            parser.error('--warp-pid must be positive')
+        args.trace = True
+        if args.warp_pid not in args.pid:
+            args.pid.append(args.warp_pid)
     if not 0 < args.seconds <= 120 or not 20 <= args.interval_ms <= 2000 or any(p <= 0 for p in args.pid):
         parser.error('duration must be 0..120s, interval 20..2000ms, PIDs positive')
     if not 1024 <= args.trace_buffer_kb <= 131072 or any(
@@ -215,11 +565,13 @@ def main():
                 scope='system counters and optional scheduling/CPU stacks; not sensor exposure or photon timing',
                 errors=[], processes={str(pid): dict(exe=os.path.realpath(f'/proc/{pid}/exe'),
                     cgroup=read(f'/proc/{pid}/cgroup')) for pid in args.pid})
+    warp = Warp(args.warp_pid, args.warp_profile) if args.warp_pid is not None else None
     trace = Trace(args.output, args.trace_buffer_kb, args.trace_idle,
-                  args.trace_event) if args.trace else None
+                  args.trace_event, warp) if args.trace else None
     perf = None
     perf_log = None
     count = 0
+    failed = False
     try:
         if trace:
             trace.start()
@@ -237,6 +589,8 @@ def main():
         next_sample = started
         with (args.output / 'system.jsonl').open('w') as stream:
             while not stop and time.monotonic() - started < args.seconds:
+                if warp:
+                    warp.refresh()
                 before = time.monotonic_ns()
                 sample = dict(mono_ns=before, threads=threads(args.pid),
                     sensors={p: read(p) for p in paths},
@@ -252,10 +606,21 @@ def main():
                 # No catch-up burst when sampling itself exceeds the interval.
                 next_sample = max(next_sample, time.monotonic())
                 time.sleep(max(0, next_sample - time.monotonic()))
+    except (OSError, ValueError, KeyError, struct.error) as error:
+        failed = True
+        meta['errors'].append('capture aborted: ' + str(error))
     finally:
         if trace:
             trace.stop()
             meta['trace'] = trace.info
+        if warp:
+            warp.cleanup()
+            meta['warp'] = warp.info
+            if (args.output / 'system.ftrace').is_file():
+                try:
+                    meta['warp_summary'] = parse_warp(args.output, warp.info)
+                except (OSError, ValueError) as error:
+                    meta['errors'].append('warp decode: ' + str(error))
         if perf:
             if perf.poll() is None:
                 os.killpg(perf.pid, signal.SIGINT)
@@ -294,7 +659,8 @@ def main():
                     request.unlink(missing_ok=True)
         write_json(args.output / 'capture.json', meta)
     print(json.dumps(dict(output=str(args.output), samples=count, errors=meta['errors'])))
+    return 1 if failed else 0
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

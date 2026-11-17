@@ -1,3 +1,10 @@
+xr-debug-console (0.1.8) unstable; urgency=medium
+
+  * Add opt-in exact-binary final-warp instruction capture and offline decoding.
+  * Record photons-to-vblank driver property with validity and error.
+
+ -- bits <bigbits@hackx.cc>  Wed, 18 Nov 2026 00:00:58 +0800
+
 xr-debug-console (0.1.7) unstable; urgency=medium
 
   * Read controller input exclusively from the current live pose-and-controls stream.

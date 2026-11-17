@@ -36,13 +36,15 @@ int main(int argc,char **argv){
  auto *system=history?static_cast<vr::IVRSystem*>(get(vr::IVRSystem_Version,&error)):nullptr;
  signal(SIGTERM,stop);signal(SIGINT,stop);setvbuf(stdout,nullptr,_IOLBF,0);
  if(system){
-  vr::ETrackedPropertyError hz_error=vr::TrackedProp_Success, photons_error=vr::TrackedProp_Success;
+  vr::ETrackedPropertyError hz_error=vr::TrackedProp_Success, photons_error=vr::TrackedProp_Success, scan_error=vr::TrackedProp_Success;
   const float hz=system->GetFloatTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd,vr::Prop_DisplayFrequency_Float,&hz_error);
   const float photons=system->GetFloatTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd,vr::Prop_SecondsFromVsyncToPhotons_Float,&photons_error);
+  const float scan=system->GetFloatTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd,vr::Prop_SecondsFromPhotonsToVblank_Float,&scan_error);
+  const bool scan_valid=scan_error==vr::TrackedProp_Success&&std::isfinite(scan);
   const bool hz_valid=hz_error==vr::TrackedProp_Success&&std::isfinite(hz)&&hz>0;
   const bool photons_valid=photons_error==vr::TrackedProp_Success&&std::isfinite(photons);
   // These are driver declarations, not measured panel scanout or optical latency.
-  std::printf("MIX_DISPLAY_TIMING {\"display_frequency_hz\":%.9g,\"display_frequency_valid\":%s,\"display_frequency_error\":%d,\"seconds_from_vsync_to_photons\":%.9g,\"photons_property_valid\":%s,\"photons_property_error\":%d,\"source\":\"driver_properties\",\"physical_scanout_verified\":false}\n",hz_valid?double(hz):0.0,hz_valid?"true":"false",int(hz_error),photons_valid?double(photons):0.0,photons_valid?"true":"false",int(photons_error));
+  std::printf("MIX_DISPLAY_TIMING {\"display_frequency_hz\":%.9g,\"display_frequency_valid\":%s,\"display_frequency_error\":%d,\"seconds_from_vsync_to_photons\":%.9g,\"photons_property_valid\":%s,\"photons_property_error\":%d,\"seconds_from_photons_to_vblank\":%.9g,\"photons_to_vblank_property_valid\":%s,\"photons_to_vblank_property_error\":%d,\"source\":\"driver_properties\",\"physical_scanout_verified\":false}\n",hz_valid?double(hz):0.0,hz_valid?"true":"false",int(hz_error),photons_valid?double(photons):0.0,photons_valid?"true":"false",int(photons_error),scan_valid?double(scan):0.0,scan_valid?"true":"false",int(scan_error));
  }
  double end=now()+std::strtod(argv[1],nullptr);
  double last_frame_seconds=-1; uint32_t last_index=0; unsigned epoch=0;

@@ -1,3 +1,4 @@
 debian/native-stage/usr/lib/*/xr/debug/tools/* usr/lib/aarch64-linux-gnu/xr/debug/tools/
 debian/native-stage/usr/lib/*/xr/debug/capture usr/lib/aarch64-linux-gnu/xr/debug/
 tools/xr-perf-capture usr/bin/
+tools/trace-profiles/steamvr-linuxarm64-late-warp.json usr/share/xr-debug/trace-profiles/
