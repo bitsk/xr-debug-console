@@ -408,9 +408,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             | "--replay"
             | "--image"
             | "--capture"
-            | "--camera-socket"
-            | "--controller-log"
-            | "--controller-boot-id" => {
+            | "--camera-socket" => {
                 options.insert(k.as_str(), it.next().ok_or("Missing option value")?.clone());
             }
             "--help" => {
@@ -513,8 +511,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .map(PathBuf::from)
             .unwrap_or_else(|| "/run/mix-vr-shell-controller/session.json".into()),
         root.clone(),
-        options.get("--controller-log").map(PathBuf::from),
-        options.get("--controller-boot-id").cloned(),
     );
     let preview = preview::Preview::new(
         (live && !screen).then_some(capture.clone()),

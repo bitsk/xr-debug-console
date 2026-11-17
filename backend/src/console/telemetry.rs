@@ -35,8 +35,6 @@ pub struct Telemetry {
     pub replay: Option<PathBuf>,
     pub session_file: PathBuf,
     pub root: PathBuf,
-    pub explicit_log: Option<PathBuf>,
-    pub explicit_boot: Option<String>,
 }
 impl Telemetry {
     pub fn new(
@@ -44,8 +42,6 @@ impl Telemetry {
         replay: Option<PathBuf>,
         session_file: PathBuf,
         root: PathBuf,
-        explicit_log: Option<PathBuf>,
-        explicit_boot: Option<String>,
     ) -> Arc<Self> {
         Arc::new(Self {
             hands:Mutex::new(super::hands::Hands::default()),
@@ -63,8 +59,6 @@ impl Telemetry {
             replay,
             session_file,
             root,
-            explicit_log,
-            explicit_boot,
         })
     }
     pub fn start(self: &Arc<Self>) {
@@ -88,11 +82,7 @@ impl Telemetry {
                         let selected =
                             controllers::selection(&a.session_file).unwrap_or(Value::Null);
                         let mut c = a.data.lock().unwrap().controllers.clone();
-                        c.logs(
-                            selected,
-                            a.explicit_log.as_deref(),
-                            a.explicit_boot.as_deref(),
-                        );
+                        c.logs(selected);
                         let mut d = a.data.lock().unwrap();
                         if c.selected["trial"] == d.controllers.selected["trial"] {
                             c.packets = d.controllers.packets.clone();

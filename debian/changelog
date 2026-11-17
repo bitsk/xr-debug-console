@@ -1,3 +1,9 @@
+xr-debug-console (0.1.7) unstable; urgency=medium
+
+  * Read controller input exclusively from the current live pose-and-controls stream.
+
+ -- bits <bigbits@hackx.cc>  Tue, 17 Nov 2026 10:08:58 +0800
+
 xr-debug-console (0.1.6) unstable; urgency=medium
 
   * Decode runtime prediction/throttling counts and record display properties.
