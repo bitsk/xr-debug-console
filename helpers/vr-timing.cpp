@@ -13,6 +13,24 @@
 static volatile sig_atomic_t running=1;
 static void stop(int){running=0;}
 static double now(){timespec t{};clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec+t.tv_nsec/1e9;}
+static void visibility(vr::IVRCompositor *compositor, vr::IVRSystem *system) {
+ const double before=now();
+ const auto foreground=compositor->GetCurrentFadeColor(false);
+ const auto background=compositor->GetCurrentFadeColor(true);
+ const float grid=compositor->GetCurrentGridAlpha();
+ vr::TrackedDevicePose_t pose{};
+ system->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseRawAndUncalibrated,0,&pose,1);
+ const unsigned focus=compositor->GetCurrentSceneFocusProcess();
+ const unsigned renderer=compositor->GetLastFrameRenderer();
+ const bool can_render=compositor->CanRenderScene();
+ std::printf("MIX_VISIBILITY {\"mono_before_seconds\":%.9f,\"mono_after_seconds\":%.9f,\"foreground_rgba\":[%.9g,%.9g,%.9g,%.9g],\"background_rgba\":[%.9g,%.9g,%.9g,%.9g],\"grid_alpha\":%.9g,\"scene_focus_pid\":%u,\"last_renderer_pid\":%u,\"can_render_scene\":%s,\"pose_valid\":%s,\"connected\":%s,\"tracking_result\":%d,\"matrix34\":[",
+  before,now(),double(foreground.r),double(foreground.g),double(foreground.b),double(foreground.a),
+  double(background.r),double(background.g),double(background.b),double(background.a),double(grid),
+  focus,renderer,can_render?"true":"false",pose.bPoseIsValid?"true":"false",pose.bDeviceIsConnected?"true":"false",int(pose.eTrackingResult));
+ for(unsigned row=0;row<3;++row)for(unsigned col=0;col<4;++col)
+  std::printf("%s%.9g",row||col?",":"",double(pose.mDeviceToAbsoluteTracking.m[row][col]));
+ std::printf("],\"scope\":\"runtime visibility and zero-ahead raw pose; not optical scanout\"}\n");
+}
 int main(int argc,char **argv){
  const bool history=argc==5&&!std::strcmp(argv[4],"--history");
  if((argc!=4&&!history)||getuid()!=1000||!getenv("VR_PATHREG_OVERRIDE"))return 2;
@@ -54,6 +72,7 @@ int main(int argc,char **argv){
    // Preserve the query bracket: neither runtime seconds nor frame counters
    // are silently identified with CLOCK_MONOTONIC / kernel vblank sequence.
    if(system){
+    visibility(compositor,system);
     float elapsed=0;uint64_t counter=0;
     double vb_before=now();bool valid=system->GetTimeSinceLastVsync(&elapsed,&counter);double vb_after=now();
     std::printf("MIX_VSYNC {\"mono_before_seconds\":%.9f,\"mono_after_seconds\":%.9f,\"valid\":%s,\"seconds_since_vsync\":%.9f,\"counter\":%llu,\"physical_scanout_verified\":false}\n",vb_before,vb_after,valid?"true":"false",double(elapsed),(unsigned long long)counter);
