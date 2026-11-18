@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     io::{self, BufRead, BufReader, Read, Write},
-    net::TcpStream,
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
@@ -104,6 +104,30 @@ impl Request {
             .get("sec-fetch-site")
             .is_none_or(|s| s != "cross-site")
             && self.headers.get("origin").is_none_or(|s| s == origin)
+    }
+    pub fn local_origin(&self, local: SocketAddr, names: &[String]) -> io::Result<String> {
+        let IpAddr::V4(ip) = local.ip() else {
+            return Err(io::Error::other("private IPv4 endpoint required"));
+        };
+        if !(ip.is_private() || ip.is_loopback()) {
+            return Err(io::Error::other("private endpoint required"));
+        }
+        let authority = self
+            .headers
+            .get("host")
+            .ok_or_else(|| io::Error::other("Host required"))?;
+        let (host, port) = authority.rsplit_once(':').unwrap_or((authority, "80"));
+        if port.parse::<u16>().ok() != Some(local.port()) {
+            return Err(io::Error::other("unexpected Host port"));
+        }
+        let name = host.to_ascii_lowercase();
+        let allowed = host.parse::<Ipv4Addr>().ok() == Some(ip)
+            || (ip.is_loopback() && name == "localhost")
+            || names.contains(&name);
+        if !allowed {
+            return Err(io::Error::other("Host does not identify this endpoint"));
+        }
+        Ok(format!("http://{authority}"))
     }
     pub fn query(&self, key: &str) -> Option<&str> {
         self.target.split_once('?')?.1.split('&').find_map(|s| {
@@ -245,7 +269,10 @@ pub fn websocket(
     let _ = ws.close(None);
     Ok(())
 }
-pub fn proxy(stream: &mut TcpStream, r: &Request, address: &str, token: &str) -> io::Result<()> {
+pub fn proxy(stream: &mut TcpStream, r: &Request, token: &str) -> io::Result<()> {
+    // The screen service is local; DHCP and public request names do not
+    // determine its transport endpoint.
+    let address = "127.0.0.1";
     let route = r.path.strip_prefix("/video").unwrap_or("");
     let public =
         r.method == "GET" && matches!(route, "/" | "/index.html" | "/app.js" | "/style.css");
@@ -316,4 +343,41 @@ pub fn proxy(stream: &mut TcpStream, r: &Request, address: &str, token: &str) ->
         return Err(io::Error::other("upstream response too large"));
     }
     reply(stream, status, &b, &mime, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn request(host: String) -> Request {
+        Request {
+            method: "POST".into(),
+            target: "/api/preview".into(),
+            path: "/api/preview".into(),
+            headers: HashMap::from([("host".into(), host)]),
+            body: Vec::new(),
+            version: "HTTP/1.1".into(),
+        }
+    }
+    #[test]
+    fn origin_tracks_the_connection_after_address_changes() {
+        let names = vec!["xr-device".into(), "xr-device.local".into()];
+        let a = SocketAddr::from((Ipv4Addr::new(10, 0, 0, 1), 8090));
+        let b = SocketAddr::from((Ipv4Addr::new(10, 0, 0, 2), 8090));
+        assert!(request(a.to_string()).local_origin(a, &names).is_ok());
+        assert!(request(b.to_string()).local_origin(b, &names).is_ok());
+        assert!(request(a.to_string()).local_origin(b, &names).is_err());
+        let mut r = request("xr-device.local:8090".into());
+        let origin = r.local_origin(b, &names).unwrap();
+        r.headers.insert("origin".into(), origin.clone());
+        assert!(r.same_origin(&origin));
+        r.headers
+            .insert("origin".into(), "http://foreign.invalid".into());
+        assert!(!r.same_origin(&origin));
+        assert!(request("foreign.invalid:8090".into())
+            .local_origin(b, &names)
+            .is_err());
+        assert!(request("xr-device.local:8091".into())
+            .local_origin(b, &names)
+            .is_err());
+    }
 }

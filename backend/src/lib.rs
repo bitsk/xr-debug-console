@@ -797,3 +797,11 @@ fn camera_active(c: &Camera) -> bool {
             .last_request
             .is_some_and(|t| t.elapsed() < Duration::from_secs(3))
 }
+
+// Exercise the production HTTP origin checks without requiring video libraries.
+#[cfg(test)]
+#[allow(dead_code)]
+mod console {
+    mod http;
+    mod util;
+}

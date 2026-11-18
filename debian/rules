@@ -16,6 +16,8 @@ override_dh_auto_build-arch:
 	cargo build --locked --offline --release --features webrtc --manifest-path backend/Cargo.toml --target $(RUST_TARGET) --target-dir $(XR_DEBUG_CARGO_TARGET_DIR)
 	if [ "$(DEB_HOST_ARCH)" = arm64 ] && [ "$(XR_DEBUG_NATIVE)" = 1 ]; then dh_auto_configure --buildsystem=cmake --sourcedirectory=native --builddirectory=build/native -- -DCMAKE_INSTALL_LIBDIR=lib/$(DEB_HOST_MULTIARCH) $(if $(XR_OPENVR_INCLUDE_DIR),-DXR_OPENVR_INCLUDE_DIR=$(XR_OPENVR_INCLUDE_DIR)) $(if $(XR_DEBUG_TOOLCHAIN),-DCMAKE_TOOLCHAIN_FILE=$(XR_DEBUG_TOOLCHAIN)) && cmake --build build/native; fi
 override_dh_auto_install:
+	install -D -m 644 systemd/qiyu-debug.service debian/tmp/usr/lib/systemd/system/qiyu-debug.service
+	install -D -m 644 systemd/qiyu-remote-video.service debian/tmp/usr/lib/systemd/system/qiyu-remote-video.service
 	if [ "$(DEB_HOST_ARCH)" = arm64 ] && [ "$(XR_DEBUG_NATIVE)" = 1 ]; then python3 tools/prepare-gst-runtime.py --package "$(XR_GST_RUNTIME_DEB)" --output debian/gst-runtime; fi
 	if [ -f "$(XR_DEBUG_CARGO_TARGET_DIR)/$(RUST_TARGET)/release/xr-debug-server" ]; then install -D "$(XR_DEBUG_CARGO_TARGET_DIR)/$(RUST_TARGET)/release/xr-debug-server" debian/tmp/usr/bin/xr-debug-server; fi
 	if [ "$(DEB_HOST_ARCH)" = arm64 ] && [ "$(XR_DEBUG_NATIVE)" = 1 ]; then DESTDIR=$(CURDIR)/debian/native-stage cmake --install build/native; fi
@@ -29,3 +31,6 @@ override_dh_strip:
 	dh_strip -Xusr/lib/aarch64-linux-gnu/xr/debug/gstreamer-1.0/
 override_dh_dwz:
 	dh_dwz -Xusr/lib/aarch64-linux-gnu/xr/debug/gstreamer-1.0/
+
+override_dh_installsystemd:
+	dh_installsystemd --no-start --no-enable

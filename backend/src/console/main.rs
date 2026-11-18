@@ -1,14 +1,13 @@
 #![recursion_limit = "256"]
 mod control;
 mod controllers;
-mod http;
 mod hands;
+mod http;
 mod load;
 mod preview;
 mod screen;
 mod telemetry;
 mod util;
-use xr_debug_native::*;
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
@@ -24,6 +23,7 @@ use std::{
     time::Duration,
 };
 use util::*;
+use xr_debug_native::*;
 struct Native {
     pointer: usize,
     tid: AtomicI32,
@@ -36,8 +36,7 @@ impl Native {
 struct App {
     live: bool,
     screen: bool,
-    address: String,
-    origin: String,
+    hostnames: Vec<String>,
     token: String,
     assets: HashMap<String, Vec<u8>>,
     control: control::Control,
@@ -75,6 +74,17 @@ impl App {
                 )
             }
         };
+        let origin = match r.local_origin(stream.local_addr()?, &self.hostnames) {
+            Ok(value) => value,
+            Err(error) => {
+                return http::json_reply(
+                    &mut stream,
+                    403,
+                    &json!({"error":error.to_string()}),
+                    self.screen,
+                )
+            }
+        };
         if stopped() {
             return http::json_reply(
                 &mut stream,
@@ -83,7 +93,7 @@ impl App {
                 self.screen,
             );
         }
-        if r.method != "GET" && !r.same_origin(&self.origin) {
+        if r.method != "GET" && !r.same_origin(&origin) {
             return http::json_reply(
                 &mut stream,
                 403,
@@ -137,7 +147,7 @@ impl App {
                     true,
                 );
             }
-            return match http::proxy(&mut stream, &r, &self.address, &self.token) {
+            return match http::proxy(&mut stream, &r, &self.token) {
                 Ok(()) => Ok(()),
                 Err(e) => http::json_reply(
                     &mut stream,
@@ -238,9 +248,11 @@ impl App {
                         false,
                     );
                 };
-                http::websocket(stream, &r, &self.origin, || self.snapshot())
+                http::websocket(stream, &r, &origin, || self.snapshot())
             }
-            ("GET", "/api/hands") => http::json_reply(&mut stream, 200, &self.snapshot()["hand_tracking"], false),
+            ("GET", "/api/hands") => {
+                http::json_reply(&mut stream, 200, &self.snapshot()["hand_tracking"], false)
+            }
             ("GET", "/api/state") => http::json_reply(&mut stream, 200, &self.snapshot(), false),
             ("GET", "/api/cameras") => {
                 unsafe {
@@ -322,13 +334,10 @@ fn capture_valid(p: &Path, screen: bool) -> bool {
         [
             "/usr/lib/aarch64-linux-gnu/xr/debug/video/nv12-capture",
             "/usr/lib/aarch64-linux-gnu/xr/debug/video/nv12-capture-gpu",
-            "/opt/mix-remote-video/nv12-capture",
-            "/opt/mix-remote-video-gpu/nv12-capture-gpu",
-            "/opt/mix-remote-video-gpu-specialized/nv12-capture-gpu",
         ]
         .contains(&p.to_str().unwrap_or(""))
     } else {
-        p == Path::new("/usr/lib/aarch64-linux-gnu/xr/debug/capture") || p == Path::new("/opt/mix-debug-console/capture") || p == Path::new("/opt/qiyu-debug/capture")
+        p == Path::new("/usr/lib/aarch64-linux-gnu/xr/debug/capture")
     };
     if !allowed {
         return false;
@@ -342,33 +351,6 @@ fn capture_valid(p: &Path, screen: bool) -> bool {
 }
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
-    if args.get(1).map(String::as_str) == Some("--wait-address") {
-        if args.len() != 5 || args[3] != "--timeout" {
-            return Err("wait-address arguments".into());
-        }
-        let ip: Ipv4Addr = args[2].parse()?;
-        let seconds = args[4].parse::<u64>()?;
-        if ip.is_unspecified()
-            || !(ip.is_private() || ip.is_loopback())
-            || !(1..=120).contains(&seconds)
-        {
-            return Err("wait-address scope".into());
-        }
-        let deadline = std::time::Instant::now() + Duration::from_secs(seconds);
-        loop {
-            match std::net::UdpSocket::bind((ip, 0)) {
-                Ok(_) => return Ok(()),
-                Err(e)
-                    if e.kind() == io::ErrorKind::AddrNotAvailable
-                        && std::time::Instant::now() < deadline =>
-                {
-                    std::thread::sleep(Duration::from_millis(250))
-                }
-                Err(e) => return Err(e.into()),
-            }
-        }
-    }
-
     if args.get(1).map(String::as_str) == Some("--relay-reader") {
         if args.len() != 4 {
             return Err("observer arguments".into());
@@ -390,7 +372,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Ok(());
     }
-    let root = std::env::var_os("XR_DEBUG_WEB_ROOT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/usr/share/xr/debug"));
+    let root = std::env::var_os("XR_DEBUG_WEB_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/usr/share/xr/debug"));
     let screen =
         args.iter().any(|s| s == "--screen-service") || args[0].ends_with("mix-video-server");
     let mut options = HashMap::new();
@@ -400,32 +384,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         match k.as_str() {
             "--screen-service" => (),
             "--offline" => offline = true,
-            "--listen"
-            | "--address"
-            | "--port"
-            | "--token-file"
-            | "--session-file"
-            | "--replay"
-            | "--image"
-            | "--capture"
-            | "--camera-socket" => {
+            "--listen" | "--port" | "--token-file" | "--session-file" | "--replay" | "--image"
+            | "--capture" | "--camera-socket" => {
                 options.insert(k.as_str(), it.next().ok_or("Missing option value")?.clone());
             }
             "--help" => {
-                println!("Native A081 debug / screen server: --listen PRIVATE_IP --port PORT --token-file FILE [--offline] [--screen-service] [--capture FILE] [--session-file FILE]");
+                println!("Native A081 debug / screen server: --listen BIND_IPV4 --port PORT --token-file FILE [--offline] [--screen-service] [--capture FILE] [--session-file FILE]");
                 return Ok(());
             }
             _ => return Err(format!("Unknown option: {k}").into()),
         }
     }
-    let address = options
-        .get("--listen")
-        .or_else(|| options.get("--address"))
-        .cloned()
-        .unwrap_or("127.0.0.1".into());
+    let address = options.get("--listen").cloned().unwrap_or("0.0.0.0".into());
     let ip: Ipv4Addr = address.parse()?;
-    if ip.is_unspecified() || !(ip.is_private() || ip.is_loopback()) {
-        return Err("Use a specific private IPv4".into());
+    if !(ip.is_unspecified() || ip.is_private() || ip.is_loopback()) {
+        return Err("Use all interfaces or a private IPv4".into());
     }
     let port = options
         .get("--port")
@@ -443,7 +416,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if live
         && (unsafe { libc::geteuid() } != 0
             || std::env::consts::ARCH != "aarch64"
-            || !["a081-steamos-arm64","a081-debian-trixie-arm64","a081-openkylin-3.0-arm64"].contains(&text("/etc/a081-rootfs-id").as_str())
+            || ![
+                "a081-steamos-arm64",
+                "a081-debian-trixie-arm64",
+                "a081-openkylin-3.0-arm64",
+            ]
+            .contains(&text("/etc/a081-rootfs-id").as_str())
             || fs::read("/proc/device-tree/model")?
                 .strip_suffix(&[0])
                 .unwrap_or(&[])
@@ -466,7 +444,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             if screen {
                 std::env::var_os("MIX_VIDEO_CAPTURE")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("/usr/lib/aarch64-linux-gnu/xr/debug/video/nv12-capture"))
+                    .unwrap_or_else(|| {
+                        PathBuf::from("/usr/lib/aarch64-linux-gnu/xr/debug/video/nv12-capture")
+                    })
             } else {
                 PathBuf::from("/usr/lib/aarch64-linux-gnu/xr/debug/capture")
             }
@@ -554,8 +534,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let app = Arc::new(App {
         live,
         screen,
-        address: address.clone(),
-        origin: format!("http://{address}:{port}"),
+        hostnames: fs::read_to_string("/etc/hostname")
+            .ok()
+            .map(|s| {
+                let name = s.trim().to_ascii_lowercase();
+                if name.is_empty()
+                    || !name
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b".-".contains(&c))
+                {
+                    Vec::new()
+                } else {
+                    vec![name.clone(), format!("{name}.local")]
+                }
+            })
+            .unwrap_or_default(),
         token,
         assets,
         control,

@@ -74,3 +74,9 @@ Shell timeline schema 4 separates queue submission (`render_mono_ns`, nine
 boundaries) from post-EndFrame fence waiting and cleanup (`retire_mono_ns`,
 three boundaries). The inspector accepts both this layout and the older eleven
 render boundaries, keeping CPU fence waits distinct from GPU execution.
+
+调试台和本地视频服务从同一软件包安装 systemd 单元，监听所有 IPv4 接口；
+网络地址变化后不需要修改地址配置或重启服务。请求目标必须是本机的私有/
+回环地址或本机主机名，同源检查按本次连接的 Host 与实际本地端点计算。
+视频代理使用回环连接；WebSocket 和视频请求不保存设备 IP。包安装不会
+自动启用或启动服务，设备集成需提供原有令牌并启用所需单元。

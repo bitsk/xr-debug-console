@@ -1,3 +1,13 @@
+xr-debug-console (0.1.10) unstable; urgency=medium
+
+  * Bind debug and video services independently of DHCP addresses; validate
+    each request against its current endpoint and local hostname.
+  * Use loopback for the video proxy and package the sole service units,
+    replacing private-prefix installation paths and address-wait startup.
+  * Accept installed MIX roots in the canonical KMS image helper.
+
+ -- bits <bigbits@hackx.cc>  Wed, 18 Nov 2026 23:56:56 +0800
+
 xr-debug-console (0.1.9) unstable; urgency=medium
 
   * Record actual compositor fade, grid, scene ownership and zero-ahead HMD

@@ -1,1 +1,3 @@
 usr/bin/xr-debug-server
+usr/lib/systemd/system/qiyu-debug.service
+usr/lib/systemd/system/qiyu-remote-video.service
